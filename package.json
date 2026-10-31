@@ -3,10 +3,54 @@
   "version": "1.0.0",
   "description": "A simple, easy-to-use point of sale for a sari-sari store: barcode selling, inventory and product pictures.",
   "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never"
+  },
   "author": "jencendencia",
   "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.18.0"
+  },
   "dependencies": {
     "electron-updater": "^6.8.11",
     "node-sqlite3-wasm": "^0.8.61"
+  },
+  "build": {
+    "appId": "com.jencendencia.sarisaripos",
+    "productName": "Sari-Sari POS",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sari-Sari POS",
+      "artifactName": "SariSariPOS.Setup.${version}.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jencendencia",
+        "repo": "sari-sari-pos",
+        "releaseType": "release"
+      }
+    ]
   }
 }
