@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sari-Sari POS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' file: img: data: https:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: data: https://fonts.gstatic.com; object-src 'none'; base-uri 'none'"
+    />
+    <!-- Typefaces load from app.js after start: the store may be offline. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div class="brand-name" id="storeName">My Sari-Sari Store</div>
+      </div>
+      <div class="topbar-right">
+        <div class="today-chip">Today: <b id="todayTotal">₱0.00</b></div>
+        <button class="icon-btn" id="muteBtn" title="Turn the beep sounds off" aria-label="Sounds">🔊</button>
+        <button class="icon-btn" id="settingsBtn" title="Store settings" aria-label="Store settings">⚙️</button>
+        <button class="icon-btn close-btn" id="closeBtn" title="Close the app" aria-label="Close the app">✕</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ============================================================ SELL -->
+      <section class="screen active" id="screen-sell">
+        <div class="scanbar">
+          <label class="scanbox" for="scanInput">
+            <span class="scan-icon">▮▯▮▮▯▮</span>
+            <input id="scanInput" placeholder="Scan the product barcode here" autocomplete="off" />
+          </label>
+          <button class="btn btn-blue" id="findItemBtn">🔍 Find item by name</button>
+          <button class="btn btn-sun" id="priceCheckBtn">🏷️ Check price</button>
+        </div>
+
+        <div class="sell-grid">
+          <div class="panel cart-panel">
+            <div class="panel-head">
+              <h2>Items in this sale</h2>
+              <span class="pill" id="cartCount">0 items</span>
+            </div>
+            <div class="cart-list" id="cartList"></div>
+            <div class="empty-state" id="cartEmpty">
+              <span class="big">🧺</span>
+              Nothing here yet.<br />Scan a barcode, or press
+              <b>Find item by name</b>.
+            </div>
+          </div>
+
+          <aside class="rail">
+            <div class="total-card">
+              <div class="total-label">Total to pay</div>
+              <div class="total-amount" id="totalAmount">₱0.00</div>
+            </div>
+            <button class="btn btn-pay" id="payBtn" disabled>💰 Take payment</button>
+            <button class="btn btn-ghost" id="freezeBtn" disabled>🧊 Freeze this sale</button>
+            <button class="btn btn-ghost" id="holdsBtn">🧊 Frozen sales<span class="pill pill-count" id="holdsCount" hidden>0</span></button>
+            <button class="btn btn-ghost" id="clearCartBtn" disabled>✖ Cancel this sale</button>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ======================================================= INVENTORY -->
+      <section class="screen" id="screen-inventory">
+        <div class="inv-head">
+          <label class="search-field">
+            <input id="invSearch" placeholder="Search name or barcode" autocomplete="off" />
+          </label>
+          <button class="btn btn-green" id="addProductBtn">＋ Add product</button>
+        </div>
+        <div class="inv-list" id="invList"></div>
+      </section>
+
+      <!-- ========================================================== HISTORY -->
+      <section class="screen" id="screen-history">
+        <div class="hist-summary">
+          <div class="stat">
+            <div class="stat-label">Sales today</div>
+            <div class="stat-value" id="statSales">0</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Money today</div>
+            <div class="stat-value" id="statTotal">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Items sold today</div>
+            <div class="stat-value" id="statItems">0</div>
+          </div>
+        </div>
+        <div class="hist-list" id="histList"></div>
+      </section>
+    </main>
+
+    <nav class="tabbar">
+      <button class="tab active" data-screen="sell"><span class="tab-icon">🛒</span> Sell</button>
+      <button class="tab" data-screen="inventory"><span class="tab-icon">📦</span> Inventory</button>
+      <button class="tab" data-screen="history"><span class="tab-icon">🧾</span> Sales</button>
+    </nav>
+
+    <div class="toast" id="toast" hidden><span id="toastText"></span></div>
+
+    <!-- ================================================= product form -->
+    <div class="modal-backdrop" id="modal-product" hidden>
+      <div class="modal modal-wide">
+        <h2 id="productTitle">Add a product</h2>
+        <form id="productForm">
+          <label class="field">
+            <span>Product name</span>
+            <input id="pName" placeholder="Example: Safeguard soap 110g" autocomplete="off" required />
+          </label>
+
+          <label class="field">
+            <span>Barcode</span>
+            <div class="pic-url-row">
+              <input id="pBarcode" placeholder="Scan now, or type it" autocomplete="off" />
+              <button type="button" class="btn btn-blue" id="lookupBtn">🔎 Look up</button>
+            </div>
+          </label>
+
+          <div class="pic-status" id="lookupStatus" hidden></div>
+
+          <div class="row2">
+            <label class="field">
+              <span>Price (₱)</span>
+              <input id="pPrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              <small>What the customer pays</small>
+            </label>
+            <label class="field">
+              <span>Original price (₱)</span>
+              <input id="pOriginal" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
+              <small>What you paid — not shown on Sell</small>
+            </label>
+          </div>
+
+          <div class="row2">
+            <label class="field">
+              <span>Stock on hand</span>
+              <input id="pStock" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Tell me when stock is this low</span>
+              <input id="pLow" type="number" min="0" step="1" inputmode="numeric" placeholder="5" />
+            </label>
+          </div>
+
+          <fieldset class="pic-box">
+            <legend>Picture of the product</legend>
+            <div class="pic-top">
+              <img class="pic-preview" id="pPreview" alt="" hidden />
+              <div class="pic-preview pic-preview-empty" id="pPreviewEmpty">No picture yet</div>
+              <div class="pic-actions">
+                <div class="pic-url-row">
+                  <input id="picQuery" placeholder="Words to search on the internet" autocomplete="off" />
+                  <button type="button" class="btn btn-blue" id="picSearchBtn">🔎 Search</button>
+                </div>
+                <div class="pic-url-row">
+                  <input id="picUrl" placeholder="…or paste a picture link" autocomplete="off" />
+                  <button type="button" class="btn btn-ghost" id="picUrlBtn">Download</button>
+                </div>
+                <button type="button" class="btn btn-ghost" id="picFileBtn">📁 Choose a picture from this computer</button>
+                <button type="button" class="btn btn-danger" id="picClearBtn">Remove the picture</button>
+              </div>
+            </div>
+            <div class="pic-results" id="picResults" hidden></div>
+            <div class="pic-status" id="picStatus" hidden></div>
+          </fieldset>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-danger" id="deleteProductBtn" hidden>Delete</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-green">Save product</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ======================================================= item picker -->
+    <div class="modal-backdrop" id="modal-picker" hidden>
+      <div class="modal">
+        <h2>Find an item</h2>
+        <label class="field">
+          <span>Type part of the name</span>
+          <input id="pickerSearch" placeholder="Example: rice, coffee, coke" autocomplete="off" />
+        </label>
+        <div class="picker-list" id="pickerList"></div>
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close>Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================================================== price checker -->
+    <div class="modal-backdrop" id="modal-price" hidden>
+      <div class="modal">
+        <h2>Check a price</h2>
+        <label class="field">
+          <span>Scan the barcode, or type the item name</span>
+          <div class="pic-url-row">
+            <input id="priceCode" placeholder="Example: coke, or 4800003333333" autocomplete="off" />
+            <button type="button" class="btn btn-blue" id="priceGoBtn">🔎 Check</button>
+          </div>
+        </label>
+
+        <div class="price-card" id="priceCard" hidden>
+          <div class="price-pic" id="pricePicWrap" hidden>
+            <img id="pricePic" alt="" />
+          </div>
+          <div class="price-info">
+            <div class="price-name" id="priceName"></div>
+            <div class="price-amount" id="priceAmount"></div>
+            <div class="price-meta" id="priceMeta"></div>
+          </div>
+        </div>
+        <div class="pic-status" id="priceStatus" hidden></div>
+
+        <div class="picker-list" id="priceResults" hidden></div>
+
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close>Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================================================= frozen sales -->
+    <div class="modal-backdrop" id="modal-holds" hidden>
+      <div class="modal">
+        <h2>Frozen sales</h2>
+        <p class="modal-note">A frozen sale is kept here until you bring it back. Nothing is sold yet.</p>
+        <div class="picker-list" id="holdsList"></div>
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close>Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================== payment -->
+    <div class="modal-backdrop" id="modal-pay" hidden>
+      <div class="modal modal-wide">
+        <div class="pay-head">
+          <h2>Take payment</h2>
+          <div class="pay-total">Total: <span id="payTotal">₱0.00</span></div>
+        </div>
+        <div class="pay-grid">
+          <div>
+            <div class="cash-label">Cash given by the customer</div>
+            <div class="cash-display" id="cashDisplay">₱0.00</div>
+            <div class="quick-row" id="quickRow">
+              <button type="button" data-quick="exact">Exact</button>
+              <button type="button" data-quick="50">₱50</button>
+              <button type="button" data-quick="100">₱100</button>
+              <button type="button" data-quick="200">₱200</button>
+              <button type="button" data-quick="500">₱500</button>
+              <button type="button" data-quick="1000">₱1,000</button>
+            </div>
+            <div class="keypad" id="keypad">
+              <button type="button" data-key="1">1</button>
+              <button type="button" data-key="2">2</button>
+              <button type="button" data-key="3">3</button>
+              <button type="button" data-key="4">4</button>
+              <button type="button" data-key="5">5</button>
+              <button type="button" data-key="6">6</button>
+              <button type="button" data-key="7">7</button>
+              <button type="button" data-key="8">8</button>
+              <button type="button" data-key="9">9</button>
+              <button type="button" data-key="00">00</button>
+              <button type="button" data-key="0">0</button>
+              <button type="button" data-key="back">⌫</button>
+            </div>
+          </div>
+          <div class="pay-right">
+            <div class="change-card">
+              <div class="change-label">Change to give back</div>
+              <div class="change-amount" id="changeAmount">₱0.00</div>
+              <div class="change-note" id="changeNote">Enter the cash received</div>
+            </div>
+            <button class="btn btn-pay" id="finishBtn" disabled>✔ Finish sale</button>
+            <button class="btn btn-ghost" data-close>← Back to the cart</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================== receipt -->
+    <div class="modal-backdrop" id="modal-receipt" hidden>
+      <div class="modal">
+        <div class="change-banner" id="changeBanner">
+          <div class="label">Change to give back</div>
+          <div class="value" id="receiptChange">₱0.00</div>
+        </div>
+        <div class="receipt-paper" id="receiptPaper"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="printBtn">🖨 Print receipt</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-green" id="newSaleBtn">Start a new sale</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================================================= view sale -->
+    <div class="modal-backdrop" id="modal-view" hidden>
+      <div class="modal">
+        <div class="receipt-paper" id="viewPaper"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="viewPrintBtn">🖨 Print</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" data-close>Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================================================== settings -->
+    <div class="modal-backdrop" id="modal-settings" hidden>
+      <div class="modal">
+        <h2>Store settings</h2>
+        <form id="settingsForm">
+          <label class="field">
+            <span>Name of your store (appears on receipts)</span>
+            <input id="sStoreName" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Tell me when stock is this low (default for new products)</span>
+            <input id="sLowStock" type="number" min="0" step="1" inputmode="numeric" />
+          </label>
+
+          <div class="update-box">
+            <div class="update-head">
+              <span class="update-title">App updates</span>
+              <span class="update-version" id="updVersion"></span>
+            </div>
+            <div class="pic-status" id="updStatus" hidden></div>
+            <div class="update-progress" id="updProgress" hidden>
+              <div class="update-track"><div class="update-fill" id="updFill"></div></div>
+              <span class="update-percent" id="updPercent">0%</span>
+            </div>
+            <div class="update-actions">
+              <button type="button" class="btn btn-blue" id="updCheckBtn">🔄 Check for updates</button>
+              <button type="button" class="btn btn-green" id="updDownloadBtn" hidden>⬇️ Download the update</button>
+              <button type="button" class="btn btn-green" id="updInstallBtn" hidden>🔁 Close and install</button>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-green">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ========================================================= confirm -->
+    <div class="modal-backdrop" id="modal-confirm" hidden>
+      <div class="modal">
+        <h2 id="confirmTitle">Are you sure?</h2>
+        <p class="confirm-text" id="confirmText"></p>
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-ghost" id="confirmNo">No, go back</button>
+          <button type="button" class="btn btn-big-red" id="confirmYes">Yes</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

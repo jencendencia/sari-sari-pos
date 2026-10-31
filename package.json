@@ -1,0 +1,12 @@
+{
+  "name": "sari-sari-pos",
+  "version": "1.0.0",
+  "description": "A simple, easy-to-use point of sale for a sari-sari store: barcode selling, inventory and product pictures.",
+  "main": "main.js",
+  "author": "jencendencia",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "node-sqlite3-wasm": "^0.8.61"
+  }
+}
