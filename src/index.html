@@ -35,8 +35,8 @@
             <span class="scan-icon">▮▯▮▮▯▮</span>
             <input id="scanInput" placeholder="Scan the product barcode here" autocomplete="off" />
           </label>
-          <button class="btn btn-blue" id="findItemBtn">🔍 Find item by name</button>
-          <button class="btn btn-sun" id="priceCheckBtn">🏷️ Check price</button>
+          <button class="btn btn-blue" id="findItemBtn" title="F2 — find an item by name">🔍 Find item by name<kbd class="key">F2</kbd></button>
+          <button class="btn btn-sun" id="priceCheckBtn" title="F3 — check a price">🏷️ Check price<kbd class="key">F3</kbd></button>
         </div>
 
         <div class="sell-grid">
@@ -58,10 +58,10 @@
               <div class="total-label">Total to pay</div>
               <div class="total-amount" id="totalAmount">₱0.00</div>
             </div>
-            <button class="btn btn-pay" id="payBtn" disabled>💰 Take payment</button>
-            <button class="btn btn-ghost" id="freezeBtn" disabled>🧊 Freeze this sale</button>
-            <button class="btn btn-ghost" id="holdsBtn">🧊 Frozen sales<span class="pill pill-count" id="holdsCount" hidden>0</span></button>
-            <button class="btn btn-ghost" id="clearCartBtn" disabled>✖ Cancel this sale</button>
+            <button class="btn btn-pay" id="payBtn" title="F4 — take payment" disabled>💰 Take payment<kbd class="key">F4</kbd></button>
+            <button class="btn btn-ghost" id="freezeBtn" title="F5 — freeze this sale" disabled>🧊 Freeze this sale<kbd class="key">F5</kbd></button>
+            <button class="btn btn-ghost" id="holdsBtn" title="F6 — frozen sales">🧊 Frozen sales<span class="pill pill-count" id="holdsCount" hidden>0</span><kbd class="key">F6</kbd></button>
+            <button class="btn btn-ghost" id="clearCartBtn" title="F10 — cancel this sale" disabled>✖ Cancel this sale<kbd class="key">F10</kbd></button>
           </aside>
         </div>
       </section>
@@ -72,7 +72,15 @@
           <label class="search-field">
             <input id="invSearch" placeholder="Search name or barcode" autocomplete="off" />
           </label>
+          <button class="btn btn-ghost" id="invHiddenBtn" hidden>
+            <span id="invHiddenLabel">Hidden</span>
+            <span class="pill pill-count" id="invHiddenCount">0</span>
+          </button>
           <button class="btn btn-green" id="addProductBtn">＋ Add product</button>
+        </div>
+        <div class="inv-found" id="invFound" hidden>
+          <span id="invFoundText"></span>
+          <button type="button" class="btn btn-ghost" id="invFoundClear">✕ Show all</button>
         </div>
         <div class="inv-list" id="invList"></div>
       </section>
@@ -253,7 +261,7 @@
         <div class="pay-grid">
           <div>
             <div class="cash-label">Cash given by the customer</div>
-            <div class="cash-display" id="cashDisplay">₱0.00</div>
+            <div class="cash-display" id="cashDisplay" role="textbox" tabindex="0" aria-label="Cash given by the customer">₱0.00</div>
             <div class="quick-row" id="quickRow">
               <button type="button" data-quick="exact">Exact</button>
               <button type="button" data-quick="50">₱50</button>
@@ -283,7 +291,7 @@
               <div class="change-amount" id="changeAmount">₱0.00</div>
               <div class="change-note" id="changeNote">Enter the cash received</div>
             </div>
-            <button class="btn btn-pay" id="finishBtn" disabled>✔ Finish sale</button>
+            <button class="btn btn-pay" id="finishBtn" title="F1 — finish the sale" disabled>✔ Finish sale<kbd class="key">F1</kbd></button>
             <button class="btn btn-ghost" data-close>← Back to the cart</button>
           </div>
         </div>
@@ -332,7 +340,7 @@
             <input id="sLowStock" type="number" min="0" step="1" inputmode="numeric" />
           </label>
 
-          <div class="update-box">
+          <div class="settings-box">
             <div class="update-head">
               <span class="update-title">App updates</span>
               <span class="update-version" id="updVersion"></span>
@@ -346,6 +354,22 @@
               <button type="button" class="btn btn-blue" id="updCheckBtn">🔄 Check for updates</button>
               <button type="button" class="btn btn-green" id="updDownloadBtn" hidden>⬇️ Download the update</button>
               <button type="button" class="btn btn-green" id="updInstallBtn" hidden>🔁 Close and install</button>
+            </div>
+          </div>
+
+          <div class="settings-box">
+            <div class="update-head">
+              <span class="update-title">Backup</span>
+            </div>
+            <p class="settings-note">
+              Saves a copy of your products, sales and settings, so a broken
+              computer does not lose them. Keep the file on a USB stick or in
+              your cloud storage.
+            </p>
+            <div class="pic-status" id="backupStatus" hidden></div>
+            <div class="update-actions">
+              <button type="button" class="btn btn-blue" id="backupBtn">💾 Back up now</button>
+              <button type="button" class="btn btn-ghost" id="backupFolderBtn" hidden>📂 Open the folder</button>
             </div>
           </div>
           <div class="modal-actions">

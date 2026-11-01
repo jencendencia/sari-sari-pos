@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
 
+  // Backup
+  backupDatabase: () => ipcRenderer.invoke('db:backup'),
+  openBackupFolder: () => ipcRenderer.invoke('db:openFolder'),
+
   // Updates
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),

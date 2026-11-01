@@ -35,19 +35,52 @@ the stock list honest without typing much.
 
 **Inventory**
 - Every product with name, barcode, price, stock on hand and picture.
+- Product names are **proper-cased for you**: the first letter of every word
+  is capitalised when you leave the field or save, so `safeguard soap 110g`
+  is stored as `Safeguard Soap 110g`. Only capital letters are added — brand
+  spellings like `Coca-Cola` or `3IN1` are never rewritten.
 - **Original price (₱)** — what the shop paid for the item — is typed right
   beside the selling price when adding or editing a product. It shows in the
   inventory list under the price, and is **never shown on the Sell screen**:
   the cart, the receipt and the price checker only ever use the selling price.
   Leave it empty and no extra line appears.
 - Scanning a barcode that is not in the inventory **looks it up online**: the
-  name, brand, size and a product picture are filled in, so only the price has
-  to be typed. The same works with the **🔎 Look up** button in the product
+  name, brand, size and a product picture are filled in. If the catalogue has
+  a price for it, the **SRP is converted to pesos and put in the Price field**
+  — with the words *check it before you save* — so scanning often means no
+  typing at all. A price you have already typed is never overwritten, and when
+  nothing is priced online the app says *No price on the internet for this
+  item — type the SRP* instead of leaving you guessing. (The free catalogues
+  price in US dollars, so the peso figure comes from a daily rate check and is
+  rounded to a whole peso; the rate is cached for 24 hours.) The same works
+  with the **🔎 Look up** button in the product
   form. It tries free, keyless catalogues in this order — Open Food Facts,
   Open Beauty Facts, Open Products Facts, then a general UPC catalogue — and
   says plainly when nothing is online.
+- **Scanning a barcode anywhere on this screen shows that item** — in the
+  search box, or with nothing focused at all (a scanner is just a fast
+  keyboard). On the inventory screen a scan never lands in the cart: it
+  displays the product on its own with a *Scanned: …* bar and a **✕ Show all**
+  button for the full list, leaves the search box empty for the next scan, and
+  focuses it. Codes match even when the scanner sends a UPC-A as 12 digits and
+  the catalogue stored EAN-13 (leading zeros and spaces are ignored). An item
+  that is not stocked says *No product in your inventory has barcode …* and the
+  full list stays put.
+- The search box (**Search name or barcode**) filters as you type; pressing
+  Enter on ordinary words keeps them and keeps the filter.
 - Stock shows a plain-English flag: *In stock*, *Running low*, *Out of stock*.
 - ± buttons adjust stock without opening the product.
+- **🙈 Hide** on a row takes an item out of sale without deleting it. It leaves
+  the list, **Find item by name**, **Check price** and the scanner (scanning it
+  anyway says *is hidden — press Show in Inventory*), while the record and its
+  sales stay in the database. The **Hidden** chip beside the search box counts
+  what is hidden and toggles those rows back into view — dimmed, dashed, with a
+  *Hidden* badge and a **👁 Show** button — and the chip only disappears when
+  nothing at all is hidden.
+- **🗑 Delete** on a row removes the item for good, after a confirmation that
+  names it (**No, go back** cancels). It is also still there in the product
+  form. Past sales keep their own copy of what was sold, so history is never
+  rewritten — but a delete cannot be undone, which is why it asks first.
 - Pictures come from three places: **find one on the internet** (searches free
   photo libraries and saves the picture into the app), **paste a picture link**
   and download it, or **choose a file from this computer**.
@@ -72,6 +105,21 @@ and the low-stock warning level.
   bar shows the download, and **🔁 Close and install** restarts the app on the
   new version — closing the app after a finished download installs it too. The
   version you are running is shown above the button.
+
+**Backup**
+- Also in ⚙️ Store settings: **💾 Back up now** writes two dated files into a
+  `backups` folder beside the database and reports both: a copy of the whole
+  database — products, sales, frozen sales and settings — and a matching
+  `sari-pictures <date>.zip` of the pictures those items point at. **📂 Open
+  the folder** goes straight there so they can be copied to a USB stick.
+  The database copy is made with SQLite's `VACUUM INTO`, so it is consistent
+  even while the app is being used and the live file is never touched. Each
+  press makes a new pair; nothing is overwritten.
+- The zip holds **only the pictures linked to an item**, not the leftovers of
+  old searches sitting in the same folder, and each entry keeps its original
+  file name — so unzipping the archive back into the `pictures` folder
+  restores every product image exactly. A linked picture that is missing on
+  this computer is reported instead of being skipped silently.
 
 ## Running it
 

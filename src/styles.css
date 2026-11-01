@@ -489,8 +489,23 @@ main {
   display: none;
 }
 
-/* ------------------------------------------------------------- updates */
-.update-box {
+/* The shortcut printed on the button it stands for, so the counter can be
+   worked from the keyboard without memorising the keys. */
+.btn .key {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------------- settings boxes */
+.settings-box {
   border: 1px solid var(--line);
   border-radius: var(--radius-ctl);
   background: var(--wash);
@@ -556,6 +571,19 @@ main {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+}
+
+.settings-note {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+/* a backup path is long: wrap it, and keep the two reported lines apart */
+.settings-box .pic-status {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 /* go */
@@ -669,6 +697,35 @@ main {
   margin-bottom: 10px;
 }
 
+/* the bar left behind by a barcode scanned into the inventory search */
+.inv-found {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: var(--wash);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-ctl);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.inv-found[hidden] {
+  display: none;
+}
+
+.inv-found span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inv-found .btn {
+  margin-left: auto;
+  flex: none;
+}
+
 .search-field {
   flex: 1;
   display: flex;
@@ -725,6 +782,35 @@ main {
 .inv-meta {
   font-size: 15px;
   color: var(--ink-soft);
+}
+
+.inv-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.inv-row.is-hidden {
+  opacity: 0.62;
+  background: var(--wash);
+  border-style: dashed;
+}
+
+.inv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .inv-price {
@@ -1520,6 +1606,13 @@ main {
 .confirm-text {
   font-size: 19px;
   margin-bottom: 16px;
+}
+
+/* The confirm opens with "No" focused, so it carries the focus ring even when
+   the dialog was reached with the mouse, where :focus-visible stays quiet. */
+#modal-confirm .btn:focus {
+  outline: 3px solid var(--go);
+  outline-offset: 2px;
 }
 
 .toast {

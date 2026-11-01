@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const yazl = require('yazl');
 
 const UA = 'SariSariPOS/1.0 (desktop point of sale)';
 
@@ -61,6 +62,7 @@ function openDb() {
       stock INTEGER NOT NULL DEFAULT 0,
       low_stock INTEGER NOT NULL DEFAULT 5,
       image TEXT,
+      hidden INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
@@ -90,6 +92,10 @@ function openDb() {
   const productColumns = db.all('PRAGMA table_info(products)');
   if (productColumns && !productColumns.some((c) => c.name === 'original_price')) {
     db.exec('ALTER TABLE products ADD COLUMN original_price REAL NOT NULL DEFAULT 0');
+  }
+  // Databases created before hiding an item existed need the column added.
+  if (productColumns && !productColumns.some((c) => c.name === 'hidden')) {
+    db.exec('ALTER TABLE products ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
   }
   migrateLegacyJson();
   return db;
@@ -181,6 +187,7 @@ function rowToProduct(row) {
     stock: row.stock,
     lowStock: row.low_stock,
     image: row.image,
+    hidden: !!row.hidden,
     updatedAt: row.updated_at,
   };
 }
@@ -433,9 +440,9 @@ async function openFactsLookup(host, version, code) {
   };
 }
 
-async function upcItemDbLookup(code) {
+async function upcItemDbLookup(code, timeoutMs) {
   const url = 'https://api.upcitemdb.com/prod/trial/lookup?upc=' + encodeURIComponent(code);
-  const { ok, status, buf } = await httpBuffer(url, 15000);
+  const { ok, status, buf } = await httpBuffer(url, timeoutMs || 15000);
   if (status === 400) return null; // that code is not in the catalogue
   if (!ok) throw new Error('UPC catalogue answered ' + status);
   const json = safeJson(buf);
@@ -444,13 +451,61 @@ async function upcItemDbLookup(code) {
   const name = item && item.title ? String(item.title).trim() : '';
   if (!name) return null;
   const images = Array.isArray(item.images) ? item.images.filter(Boolean).slice(0, 3) : [];
+  // Prices: prefer the list/SRP figure from an offer, then a live offer price,
+  // then the lowest price ever recorded for this code. The catalogue leaves
+  // `currency` empty for most records — its data is US retail, so it is read
+  // as US dollars and converted before it ever reaches a peso field.
+  const offers = Array.isArray(item.offers) ? item.offers.filter(Boolean) : [];
+  const priced = offers.find((o) => Number(o.list_price) > 0) || offers.find((o) => Number(o.price) > 0);
+  const price = Number(priced ? priced.list_price || priced.price : item.lowest_recorded_price) || 0;
+  const currency = String((priced && priced.currency) || item.currency || 'USD').trim().toUpperCase() || 'USD';
   return {
     name,
     brand: String(item.brand || '').trim(),
     size: String(item.size || '').trim(),
     image: images[0] || null,
     images,
+    price: price > 0 ? price : null,
+    priceCurrency: price > 0 ? currency : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Peso conversion for an internet price. Cached for a day: a shopkeeper adding
+// a shelf of products should not wait on a rate check for every barcode.
+// ---------------------------------------------------------------------------
+let rateCache = { at: 0, rate: 0 };
+
+async function pesoRate() {
+  if (rateCache.rate && Date.now() - rateCache.at < 24 * 60 * 60 * 1000) return rateCache.rate;
+  const { ok, buf } = await httpBuffer('https://open.er-api.com/v6/latest/USD', 15000);
+  if (!ok) throw new Error('the peso rate could not be checked');
+  const json = safeJson(buf);
+  const rate = json && json.rates ? Number(json.rates.PHP) : 0;
+  if (!rate || !isFinite(rate)) throw new Error('the peso rate could not be checked');
+  rateCache = { at: Date.now(), rate };
+  return rate;
+}
+
+async function attachPesoPrice(result) {
+  const price = Number(result.price);
+  if (!price || price <= 0) return;
+  const currency = String(result.priceCurrency || '').toUpperCase();
+  if (currency === 'PHP') {
+    result.pesoPrice = Math.round(price);
+    result.priceSource = 'a peso price on the internet';
+    return;
+  }
+  try {
+    const rate = await pesoRate();
+    result.pesoPrice = Math.round(price * rate);
+    result.priceSource = `${currency || 'USD'} ${price.toFixed(2)} converted at ${rate.toFixed(1)}`;
+  } catch (err) {
+    // Keep the foreign figure so the screen can say what it did find.
+    result.pesoPrice = null;
+    result.priceSource = null;
+    console.error('[barcode-price]', String((err && err.message) || err));
+  }
 }
 
 ipcMain.handle('products:lookupBarcode', async (_event, rawCode) => {
@@ -480,12 +535,15 @@ ipcMain.handle('products:lookupBarcode', async (_event, rawCode) => {
   let result = null;
   let answered = 0;
   let lastProblem = null;
-  for (const step of steps) {
+  let resultStep = -1;
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i];
     try {
       const found = await step();
       answered += 1;
       if (found) {
         result = found;
+        resultStep = i;
         break;
       }
     } catch (err) {
@@ -498,6 +556,23 @@ ipcMain.handle('products:lookupBarcode', async (_event, rawCode) => {
     // Nothing answered at all: do not cache it, so a retry can succeed.
     throw new Error('The internet could not be reached for this barcode.');
   }
+
+  // The food and cosmetics catalogues carry no prices at all, so when one of
+  // them supplied the name, ask the UPC catalogue only for a price — with a
+  // short timeout, and quietly, because the name and picture already landed.
+  if (result && !result.price && resultStep !== steps.length - 1) {
+    try {
+      const priced = await upcItemDbLookup(code, 6000);
+      if (priced && priced.price) {
+        result.price = priced.price;
+        result.priceCurrency = priced.priceCurrency;
+      }
+    } catch (err) {
+      console.error('[barcode-price]', String((err && err.message) || err));
+    }
+  }
+
+  if (result) await attachPesoPrice(result);
 
   lookupCache.set(code, { at: Date.now(), result });
   if (lookupCache.size > 300) lookupCache.delete(lookupCache.keys().next().value);
@@ -659,16 +734,21 @@ ipcMain.handle('products:save', (_event, product) => {
     image: product.image ? String(product.image) : null,
     updatedAt: new Date().toISOString(),
   };
-  const found = conn.get('SELECT id FROM products WHERE id = ?', [record.id]);
+  const found = conn.get('SELECT id, hidden FROM products WHERE id = ?', [record.id]);
+  // A save that does not mention `hidden` (the product form, stock buttons)
+  // must never unhide an item by accident, so it keeps whatever is stored.
+  record.hidden =
+    product && product.hidden !== undefined ? !!product.hidden : found ? !!found.hidden : false;
+  const hiddenFlag = record.hidden ? 1 : 0;
   if (found) {
     conn.run(
-      'UPDATE products SET name = ?, barcode = ?, price = ?, original_price = ?, stock = ?, low_stock = ?, image = ?, updated_at = ? WHERE id = ?',
-      [record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, record.updatedAt, record.id]
+      'UPDATE products SET name = ?, barcode = ?, price = ?, original_price = ?, stock = ?, low_stock = ?, image = ?, hidden = ?, updated_at = ? WHERE id = ?',
+      [record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt, record.id]
     );
   } else {
     conn.run(
-      'INSERT INTO products (id, name, barcode, price, original_price, stock, low_stock, image, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
-      [record.id, record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, record.updatedAt]
+      'INSERT INTO products (id, name, barcode, price, original_price, stock, low_stock, image, hidden, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [record.id, record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt]
     );
   }
   return record;
@@ -802,6 +882,94 @@ ipcMain.handle('settings:save', (_event, settings) => {
   }
   return readSettings();
 });
+
+// ---------------------------------------------------------------------------
+// Backup: a dated snapshot of the whole database, kept in a Backups folder
+// beside it. VACUUM INTO writes a consistent copy even while the app is being
+// used, and it never touches the live file.
+// ---------------------------------------------------------------------------
+function backupDir() {
+  const dir = path.join(app.getPath('userData'), 'backups');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function backupNames() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const dir = backupDir();
+  let n = 0;
+  const suffix = () => (n ? ` (${n})` : '');
+  let db = path.join(dir, `sari-pos-backup ${stamp}${suffix()}.db`);
+  let zip = path.join(dir, `sari-pictures ${stamp}${suffix()}.zip`);
+  while (fs.existsSync(db) || fs.existsSync(zip)) {
+    n += 1;
+    db = path.join(dir, `sari-pos-backup ${stamp}${suffix()}.db`);
+    zip = path.join(dir, `sari-pictures ${stamp}${suffix()}.zip`);
+  }
+  return { db, zip };
+}
+
+// Only the pictures an item actually points at. The folder also holds
+// leftovers from old searches, and those are not worth backing up.
+function linkedPictures() {
+  const rows = openDb().all("SELECT image FROM products WHERE image IS NOT NULL AND image <> ''");
+  const seen = new Set();
+  const entries = [];
+  let missing = 0;
+  for (const row of rows) {
+    const name = String(row.image || '');
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const full = safePicturePath(name); // basename only, and inside the folder
+    if (full) entries.push({ full, name: path.basename(full) });
+    else missing += 1;
+  }
+  return { entries, missing };
+}
+
+function zipPictures(entries, target) {
+  return new Promise((resolve, reject) => {
+    const zip = new yazl.ZipFile();
+    for (const entry of entries) zip.addFile(entry.full, entry.name);
+    zip.end();
+    const out = fs.createWriteStream(target);
+    out.on('error', reject);
+    zip.outputStream.on('error', reject);
+    out.on('close', resolve);
+    zip.outputStream.pipe(out);
+  });
+}
+
+ipcMain.handle('db:backup', async () => {
+  const names = backupNames();
+  openDb().run('VACUUM INTO ?', [names.db]);
+  const size = fs.statSync(names.db).size;
+  if (!size) throw new Error('The backup file came out empty.');
+
+  const { entries, missing } = linkedPictures();
+  let picturesZip = null;
+  let picturesSize = 0;
+  if (entries.length) {
+    await zipPictures(entries, names.zip);
+    picturesZip = names.zip;
+    picturesSize = fs.statSync(names.zip).size;
+  }
+
+  return {
+    file: names.db,
+    size,
+    pictures: entries.length,
+    missing,
+    picturesZip,
+    picturesSize,
+    at: new Date().toISOString(),
+  };
+});
+
+// Only ever opens the Backups folder — the renderer cannot ask for any path.
+ipcMain.handle('db:openFolder', () => shell.openPath(backupDir()));
 
 // ---------------------------------------------------------------------------
 // Pictures IPC

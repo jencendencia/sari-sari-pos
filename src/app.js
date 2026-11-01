@@ -39,6 +39,8 @@ const state = {
   cash: '',
   editingId: null,
   editingImage: null,
+  showHidden: false,
+  scanHit: null,
 };
 
 /* ------------------------------------------------------------------ sound */
@@ -105,6 +107,9 @@ function confirmBox(title, text, yesLabel) {
     $('#confirmText').textContent = text;
     $('#confirmYes').textContent = yesLabel || 'Yes';
     openModal('modal-confirm');
+    // "No" is the safe answer, so it starts highlighted: a stray Enter or
+    // Space press backs out instead of deleting anything.
+    $('#confirmNo').focus();
   });
 }
 
@@ -116,6 +121,15 @@ function settleConfirm(value) {
     done(value);
   }
 }
+
+// The arrow keys step between No and Yes, so the question can be answered
+// without the mouse. There are only two buttons, so either direction toggles.
+$('#modal-confirm').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const onNo = document.activeElement === $('#confirmNo');
+  (onNo ? $('#confirmYes') : $('#confirmNo')).focus();
+});
 
 /* ------------------------------------------------------------------- modals */
 function openModal(id) {
@@ -134,14 +148,79 @@ $$('[data-close]').forEach((btn) => {
   });
 });
 
-// Clicking the dark backdrop closes non-destructive dialogs.
-$$('.modal-backdrop').forEach((backdrop) => {
-  backdrop.addEventListener('mousedown', (event) => {
-    if (event.target !== backdrop) return;
-    if (backdrop.id === 'modal-confirm') return;
-    backdrop.hidden = true;
-    focusScanner();
-  });
+// A dialog is never dismissed by a stray tap on the dark backdrop: a sale in
+// progress or a half-typed product would be lost. Escape is the way out.
+// It acts on the top-most dialog only — the last one left visible, since later
+// dialogs stack over earlier ones — so a confirm opened over a form is
+// answered first and the form stays open behind it.
+function topModal() {
+  const shown = $$('.modal-backdrop:not([hidden])');
+  return shown.length ? shown[shown.length - 1] : null;
+}
+
+function escapeTopModal() {
+  const modal = topModal();
+  if (!modal) return false;
+  // A confirm is waiting on an answer, so Escape has to answer it as "No" —
+  // hiding it quietly would leave the caller waiting forever.
+  if (modal.id === 'modal-confirm') settleConfirm(false);
+  else modal.hidden = true;
+  focusScanner();
+  return true;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' && event.key !== 'Esc') return;
+  if (!escapeTopModal()) return;
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+/* ------------------------------------------------------ keyboard shortcuts */
+// Everything a busy counter needs has its own key, so a sale can be rung up
+// without the mouse: F2 find an item, F3 check a price, F4 take payment,
+// F5 freeze the sale, F6 the frozen sales, F10 cancel it — and F1 finishes the
+// sale from inside the payment screen. Escape still backs out of what is open.
+const sellScreenKeys = {
+  F2: () => openPicker(),
+  F3: () => openPriceCheck(),
+  F4: () => $('#payBtn').click(),
+  F5: () => freezeCurrentSale(),
+  F6: () => openHolds(),
+  F10: () => $('#clearCartBtn').click(),
+};
+
+document.addEventListener('keydown', (event) => {
+  if (!/^F([1-9]|1[0-2])$/.test(event.key)) return;
+
+  const modal = topModal();
+
+  // In the payment screen F1 is the till key: take the money and finish.
+  if (modal && modal.id === 'modal-pay') {
+    if (event.key !== 'F1') return;
+    event.preventDefault();
+    if ($('#finishBtn').disabled) {
+      beep('bad');
+      toast('Type the cash the customer gave first.');
+      return;
+    }
+    $('#finishBtn').click();
+    return;
+  }
+
+  // Any other dialog (a form, a confirm, a receipt) keeps its keys to itself.
+  if (modal || state.screen !== 'sell') return;
+
+  const action = sellScreenKeys[event.key];
+  if (!action) return;
+  event.preventDefault();
+
+  if (['F4', 'F5', 'F10'].includes(event.key) && !state.cart.length) {
+    beep('bad');
+    toast('The cart is empty.');
+    return;
+  }
+  action();
 });
 
 function focusScanner() {
@@ -284,17 +363,19 @@ function priceMatches(raw) {
   if (!query) return [];
   const code = query.replace(/[\s-]/g, '');
   const needle = query.toLowerCase();
+  // Hidden items are not being sold, so the price checker leaves them out too.
+  const visible = state.products.filter((p) => !p.hidden);
 
-  const byCode = findLocalProduct(code);
+  const byCode = visible.find((p) => String(p.barcode || '').trim() === code);
   if (byCode) return [byCode];
 
   // A barcode half-typed by hand: let a few digits narrow it down.
   if (/^\d{3,}$/.test(code)) {
-    const partial = state.products.filter((p) => String(p.barcode || '').trim().startsWith(code));
+    const partial = visible.filter((p) => String(p.barcode || '').trim().startsWith(code));
     if (partial.length) return partial;
   }
 
-  return state.products.filter(
+  return visible.filter(
     (p) =>
       p.name.toLowerCase().includes(needle) || String(p.barcode || '').trim() === code
   );
@@ -551,7 +632,23 @@ async function submitScan(raw) {
   const code = String(raw || '').trim();
   if (!code) return;
   $('#scanInput').value = '';
+
+  // On the inventory screen a scan means "show me this item", not "sell it" —
+  // the list changes instead of a line quietly landing in the cart.
+  if (state.screen === 'inventory') {
+    showScannedItem(code);
+    return;
+  }
+
   const product = findLocalProduct(code);
+  if (product && product.hidden) {
+    beep('bad');
+    flash(false);
+    toast(`${product.name} is hidden — press Show in Inventory if you want to sell it.`, {
+      duration: 7000,
+    });
+    return focusScanner();
+  }
   if (product) return addToCart(product);
 
   beep('bad');
@@ -582,6 +679,9 @@ document.addEventListener('keydown', (event) => {
   const typing =
     active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
   if (typing) return;
+
+  // While the payment screen is up, the keyboard belongs to the cash box.
+  if (!$('#modal-pay').hidden) return;
 
   if (event.key === 'Enter') {
     if (scanBuffer.length >= 3) {
@@ -628,11 +728,19 @@ function openPicker() {
 function renderPicker(query) {
   const q = String(query || '').trim().toLowerCase();
   const matches = state.products.filter(
-    (p) => !q || p.name.toLowerCase().includes(q) || String(p.barcode || '').includes(q)
+    (p) =>
+      !p.hidden && (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').includes(q))
   );
   const list = $('#pickerList');
   if (!matches.length) {
-    list.innerHTML = `<div class="empty-state">No product matches “${esc(query)}”.<br />Add it in <b>Inventory</b> first.</div>`;
+    const hiddenHit = state.products.find(
+      (p) => p.hidden && (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').includes(q))
+    );
+    list.innerHTML = `<div class="empty-state">${
+      hiddenHit
+        ? `“${esc(hiddenHit.name)}” is hidden, so it cannot be sold.<br />Press <b>Hidden</b> in <b>Inventory</b> to bring it back.`
+        : `No product matches “${esc(query)}”.<br />Add it in <b>Inventory</b> first.`
+    }</div>`;
     return;
   }
   list.innerHTML = matches
@@ -656,10 +764,44 @@ $('#pickerSearch').addEventListener('input', (event) => renderPicker(event.targe
 $('#pickerList').addEventListener('click', (event) => {
   const button = event.target.closest('.picker-item');
   if (!button) return;
-  const product = state.products.find((p) => p.id === button.dataset.id);
+  pickProduct(button.dataset.id);
+});
+
+function pickProduct(id) {
+  const product = state.products.find((p) => p.id === id);
   if (!product) return;
   closeModal('modal-picker');
   addToCart(product);
+}
+
+/* Arrow keys move a highlight through the matches; nothing is added to the cart
+   until Enter lands on the highlighted row, so a sale can be rung up without
+   reaching for the mouse but a stray key press cannot ring up the wrong item. */
+function movePickerHighlight(step) {
+  const items = $$('#pickerList .picker-item');
+  if (!items.length) return;
+  const current = items.findIndex((item) => item.classList.contains('is-on'));
+  const index = current === -1 ? (step > 0 ? 0 : -1) : current + step;
+  if (index < 0) {
+    items.forEach((item) => item.classList.remove('is-on'));
+    return;
+  }
+  const next = items[Math.min(index, items.length - 1)];
+  items.forEach((item) => item.classList.toggle('is-on', item === next));
+  next.scrollIntoView({ block: 'nearest' });
+}
+
+$('#pickerSearch').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    movePickerHighlight(event.key === 'ArrowDown' ? 1 : -1);
+    return;
+  }
+  if (event.key !== 'Enter') return;
+  const chosen = $('#pickerList').querySelector('.picker-item.is-on');
+  if (!chosen) return;
+  event.preventDefault();
+  pickProduct(chosen.dataset.id);
 });
 
 /* -------------------------------------------------------------- inventory */
@@ -679,15 +821,48 @@ function stockFlagText(product) {
 
 function renderInventory() {
   const q = $('#invSearch').value.trim().toLowerCase();
-  const items = state.products
-    .filter((p) => !q || p.name.toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q))
+  const hiddenCount = state.products.filter((p) => p.hidden).length;
+  if (!hiddenCount) state.showHidden = false;
+
+  // Hidden items stay out of the list until the shopkeeper asks for them,
+  // except while searching: looking for a name on purpose should find it.
+  const chip = $('#invHiddenBtn');
+  chip.hidden = hiddenCount === 0;
+  $('#invHiddenCount').textContent = hiddenCount;
+  $('#invHiddenLabel').textContent = state.showHidden ? 'Show hidden' : 'Hidden';
+
+  // A barcode scanned into the box leaves the box empty but shows its item on
+  // its own. Typing takes the list back over, and an item that has since been
+  // deleted drops the special view instead of showing an empty screen.
+  if (q) state.scanHit = null;
+  const scanned = state.scanHit ? state.products.find((p) => p.id === state.scanHit) : null;
+  if (state.scanHit && !scanned) state.scanHit = null;
+  $('#invFound').hidden = !state.scanHit;
+  if (scanned) $('#invFoundText').textContent = `Scanned: ${scanned.name}`;
+
+  const items = (state.scanHit
+      ? state.products.filter((p) => p.id === state.scanHit)
+      : state.products.filter(
+          (p) =>
+            (q || state.showHidden || !p.hidden) &&
+            (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q))
+        )
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const list = $('#invList');
   if (!items.length) {
     list.innerHTML = `<div class="empty-state"><span class="big">📦</span>${
-      q ? `No product matches “${esc(q)}”.` : 'Your inventory is empty.'
-    }<br />Press <b>Add product</b> to put the first item in.</div>`;
+      q
+        ? `No product matches “${esc(q)}”.`
+        : hiddenCount
+          ? 'Every item is hidden.'
+          : 'Your inventory is empty.'
+    }${
+      q || !hiddenCount
+        ? '<br />Press <b>Add product</b> to put the first item in.'
+        : '<br />Press <b>Hidden</b> above to bring them back.'
+    }</div>`;
     return;
   }
 
@@ -698,10 +873,10 @@ function renderInventory() {
         : `<div class="thumb thumb-empty">🛒</div>`;
       const flag = stockFlagClass(p);
       return `
-      <div class="inv-row" data-id="${esc(p.id)}">
+      <div class="inv-row${p.hidden ? ' is-hidden' : ''}" data-id="${esc(p.id)}">
         ${pic}
         <div>
-          <div class="inv-name">${esc(p.name)}</div>
+          <div class="inv-name">${esc(p.name)}${p.hidden ? '<span class="inv-badge">Hidden</span>' : ''}</div>
           <div class="inv-meta">${p.barcode ? 'Barcode: ' + esc(p.barcode) : 'No barcode'}</div>
         </div>
         <div class="inv-price">
@@ -720,13 +895,92 @@ function renderInventory() {
           </div>
           <button type="button" data-act="plus" aria-label="More stock">+</button>
         </div>
-        <button type="button" class="btn btn-ghost" data-act="edit">✏️ Edit</button>
+        <div class="inv-actions">
+          <button type="button" class="btn btn-ghost" data-act="edit">✏️ Edit</button>
+          <button type="button" class="btn btn-ghost" data-act="hide">${
+            p.hidden ? '👁 Show' : '🙈 Hide'
+          }</button>
+          <button type="button" class="btn btn-ghost btn-danger" data-act="delete" aria-label="Delete ${
+            esc(p.name)
+          }">🗑</button>
+        </div>
       </div>`;
     })
     .join('');
 }
 
 $('#invSearch').addEventListener('input', renderInventory);
+
+// The "Scanned: …" bar is the way back to the full list after a scan.
+$('#invFoundClear').addEventListener('click', () => {
+  state.scanHit = null;
+  $('#invSearch').value = '';
+  renderInventory();
+  $('#invSearch').focus();
+});
+
+// A scanner types into whatever field has focus, so a barcode can land in this
+// box — and the digits it leaves behind would stick to the next scan. Enter
+// means "that was a scan": empty the box, bring the whole list back and say
+// which item the code belongs to. Words ending in a few digits are left alone,
+// so searching for a name still works normally.
+// A scanner may send a UPC-A as 12 digits while the catalogue stored it as
+// EAN-13 (or the other way round), and a code can arrive with spaces in it.
+// Ignoring separators and leading zeros lets either form find the item.
+function barcodeDigits(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\s-]/g, '')
+    .replace(/^0+/, '');
+}
+
+function matchBarcode(raw) {
+  const plain = String(raw || '').replace(/[\s-]/g, '');
+  const wanted = barcodeDigits(plain);
+  if (wanted) {
+    const byCode = state.products.find((p) => barcodeDigits(p.barcode) === wanted);
+    if (byCode) return byCode;
+  }
+  if (!plain) return null;
+  // a few items are stored with the code as their name
+  return state.products.find((p) => String(p.name || '').includes(plain)) || null;
+}
+
+// One place decides what a barcode scanned on the Inventory screen means:
+// show that item. The box is emptied for the next scan, the item appears on
+// its own, and a bar above the list offers the way back to everything else.
+function showScannedItem(raw) {
+  const code = String(raw || '').replace(/[\s-]/g, '');
+  const hit = matchBarcode(code);
+  const box = $('#invSearch');
+  box.value = '';
+  if (hit) {
+    state.scanHit = hit.id;
+    renderInventory();
+    beep('ok');
+    toast(`Found in inventory: ${hit.name}`);
+  } else {
+    state.scanHit = null;
+    renderInventory();
+    beep('bad');
+    toast(`No product in your inventory has barcode ${code}.`, { error: true, duration: 7000 });
+  }
+  box.focus();
+}
+
+$('#invSearch').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  const raw = event.target.value;
+  const typed = raw.match(/(\d{6,})\s*$/);
+  const code = typed ? typed[1] : matchBarcode(raw) ? raw.trim() : '';
+  if (!code) return;
+
+  event.preventDefault();
+  showScannedItem(code);
+});
+$('#invHiddenBtn').addEventListener('click', () => {
+  state.showHidden = !state.showHidden;
+  renderInventory();
+});
 $('#addProductBtn').addEventListener('click', () => openProductForm());
 
 $('#invList').addEventListener('click', async (event) => {
@@ -737,6 +991,35 @@ $('#invList').addEventListener('click', async (event) => {
   if (!product) return;
 
   if (button.dataset.act === 'edit') return openProductForm(product);
+
+  if (button.dataset.act === 'hide') {
+    const hidden = !product.hidden;
+    const saved = await window.api.saveProduct({ ...product, hidden });
+    const index = state.products.findIndex((p) => p.id === saved.id);
+    if (index >= 0) state.products[index] = saved;
+    renderInventory();
+    toast(
+      hidden
+        ? `${saved.name} is hidden — it will not appear when you sell.`
+        : `${saved.name} is back in the list.`
+    );
+    return;
+  }
+
+  if (button.dataset.act === 'delete') {
+    const ok = await confirmBox(
+      'Delete this item?',
+      `${product.name} will be removed from your inventory. Past sales keep their own copy of the sale, but this cannot be undone.`,
+      'Yes, delete'
+    );
+    if (!ok) return;
+    await window.api.deleteProduct(product.id);
+    state.products = state.products.filter((p) => p.id !== product.id);
+    renderInventory();
+    toast(`Deleted: ${product.name}`);
+    focusScanner();
+    return;
+  }
 
   const delta = button.dataset.act === 'plus' ? 1 : -1;
   if (product.stock + delta < 0) return;
@@ -759,6 +1042,13 @@ function setPreview(filename) {
     img.hidden = true;
     empty.hidden = false;
   }
+}
+
+// Proper case for a product name: the first letter of every word is
+// capitalised and nothing else is touched, so brand spellings written in caps
+// or with hyphens ("Coca-Cola", "3IN1") come through exactly as typed.
+function properCaseName(text) {
+  return String(text || '').replace(/(^|[\s(\[{,-])([a-z])/g, (match, before, letter) => before + letter.toUpperCase());
 }
 
 function openProductForm(product, scanBarcode) {
@@ -788,8 +1078,16 @@ function openProductForm(product, scanBarcode) {
   if (!product && scanBarcode) setTimeout(() => lookupOnline(scanBarcode), 60);
 }
 
+// Show the proper case the moment the name field is left, so what is stored
+// is what was seen.
+$('#pName').addEventListener('blur', () => {
+  const fixed = properCaseName($('#pName').value);
+  if (fixed !== $('#pName').value) $('#pName').value = fixed;
+});
+
 $('#productForm').addEventListener('submit', async (event) => {
   event.preventDefault();
+  $('#pName').value = properCaseName($('#pName').value); // Enter can skip blur
   const payload = {
     id: state.editingId,
     name: $('#pName').value,
@@ -861,6 +1159,31 @@ function errText(err) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+// The SRP line is appended to whatever the lookup is already saying, and the
+// colour already on screen (a picture problem, say) is kept.
+function appendLookupStatus(text) {
+  const el = $('#lookupStatus');
+  const keepError = el.classList.contains('is-error');
+  const prefix = el.hidden ? '' : `${el.textContent.trim()} `;
+  lookupStatus(`${prefix}${text}`, keepError ? 'error' : 'ok');
+}
+
+// What the internet knows about the price. A price already typed in the field
+// is never touched — the shopkeeper's own figure always wins.
+function applySrp(found) {
+  const input = $('#pPrice');
+  if (found.pesoPrice) {
+    if (input.value) return '';
+    input.value = String(found.pesoPrice);
+    return `SRP from the internet: ${peso(found.pesoPrice)} — check it before you save.`;
+  }
+  if (input.value) return '';
+  if (found.price) {
+    return `The internet only has ${found.priceCurrency || 'USD'} ${Number(found.price).toFixed(2)} for this item — type the SRP in pesos.`;
+  }
+  return 'No price on the internet for this item — type the SRP.';
+}
+
 async function lookupOnline(rawCode) {
   const code = String(rawCode || '').replace(/[\s-]/g, '');
   if (!/^\d{6,14}$/.test(code)) {
@@ -905,6 +1228,8 @@ async function lookupOnline(rawCode) {
         }
       }
     }
+    const priceLine = applySrp(found);
+    if (priceLine) appendLookupStatus(priceLine);
     return true;
   } catch (err) {
     lookupStatus('Could not reach the internet. Type the product name yourself.', 'error');
@@ -1042,13 +1367,17 @@ function renderPayment() {
   $('#finishBtn').disabled = !(cash >= total && total > 0);
 }
 
-$('#payBtn').addEventListener('click', () => {
+function openPayment() {
   if (!state.cart.length) return;
   state.cash = '';
   $('#payTotal').textContent = peso(cartTotal());
   renderPayment();
   openModal('modal-pay');
-});
+  // The cash box takes the cursor straight away, so the amount can be typed.
+  setTimeout(() => $('#cashDisplay').focus(), 30);
+}
+
+$('#payBtn').addEventListener('click', openPayment);
 
 $('#quickRow').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-quick]');
@@ -1058,16 +1387,46 @@ $('#quickRow').addEventListener('click', (event) => {
   beep('ok');
 });
 
-$('#keypad').addEventListener('click', (event) => {
-  const button = event.target.closest('button[data-key]');
-  if (!button) return;
-  const key = button.dataset.key;
+// Tapping the keypad and typing on the number row feed the same amount: digits
+// are appended, and one backspace takes the last one off again.
+function pressCashKey(key) {
   if (key === 'back') state.cash = state.cash.slice(0, -1);
   else if (state.cash.length < 9) state.cash = (state.cash + key).replace(/^0+(?=\d)/, '');
   renderPayment();
+}
+
+$('#keypad').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-key]');
+  if (!button) return;
+  pressCashKey(button.dataset.key);
 });
 
-$('#finishBtn').addEventListener('click', async () => {
+// The cash box holds the focus while payment is open, so the number row types
+// the amount and Enter takes the money — no mouse, no tapping.
+document.addEventListener('keydown', (event) => {
+  if (topModal() !== $('#modal-pay')) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  if (/^\d$/.test(event.key)) pressCashKey(event.key);
+  else if (event.key === 'Backspace') pressCashKey('back');
+  else if (event.key === 'Enter') {
+    event.preventDefault();
+    finishSale();
+    return;
+  } else return;
+
+  event.preventDefault();
+});
+
+// One basket is booked once: the button stays off while the save is in flight,
+// so a double tap (or F1 pressed twice) cannot ring the same sale twice.
+let finishingSale = false;
+
+async function finishSale() {
+  if (finishingSale || $('#finishBtn').disabled) return;
+  finishingSale = true;
+  $('#finishBtn').disabled = true;
+
   try {
     const sale = await window.api.createSale({
       items: state.cart.map((line) => ({ id: line.id, qty: line.qty })),
@@ -1088,8 +1447,13 @@ $('#finishBtn').addEventListener('click', async () => {
     flash(true);
   } catch (err) {
     toast(err.message || 'The sale could not be saved.', { error: true, duration: 7000 });
+  } finally {
+    finishingSale = false;
+    renderPayment();
   }
-});
+}
+
+$('#finishBtn').addEventListener('click', finishSale);
 
 /* -------------------------------------------------------------- receipts */
 function receiptHtml(sale) {
@@ -1270,6 +1634,54 @@ window.api.onUpdateStatus(({ status, data }) => {
 $('#updCheckBtn').addEventListener('click', () => window.api.checkForUpdates());
 $('#updDownloadBtn').addEventListener('click', () => window.api.downloadUpdate());
 $('#updInstallBtn').addEventListener('click', () => window.api.installUpdate());
+
+/* --------------------------------------------------------------- backup */
+function backupStatus(message, kind) {
+  const el = $('#backupStatus');
+  if (!message) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+  el.classList.toggle('is-error', kind === 'error');
+  el.classList.toggle('is-ok', kind === 'ok');
+}
+
+function sizeText(bytes) {
+  const kb = (Number(bytes) || 0) / 1024;
+  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(kb))} KB`;
+}
+
+$('#backupBtn').addEventListener('click', async () => {
+  const button = $('#backupBtn');
+  button.disabled = true;
+  backupStatus('Making a copy of your database and pictures…');
+  try {
+    const result = await window.api.backupDatabase();
+    const lines = [`Database (${sizeText(result.size)}): ${result.file}`];
+    if (result.picturesZip) {
+      lines.push(`Pictures — ${result.pictures} linked to items (${sizeText(result.picturesSize)}): ${result.picturesZip}`);
+    } else {
+      lines.push('Pictures: none are linked to an item yet, so no zip was made.');
+    }
+    if (result.missing) {
+      lines.push(`${result.missing} linked picture(s) are missing on this computer and were left out.`);
+    }
+    $('#backupFolderBtn').hidden = false;
+    backupStatus(lines.join('\n'), 'ok');
+    beep('done');
+    toast('Backup saved.');
+  } catch (err) {
+    backupStatus(`The backup could not be made: ${errText(err)}`, 'error');
+    beep('bad');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#backupFolderBtn').addEventListener('click', () => window.api.openBackupFolder());
 
 /* ---------------------------------------------------------------- window */
 // The window has no system title bar, so this ✕ in the header is the only
