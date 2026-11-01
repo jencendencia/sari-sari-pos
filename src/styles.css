@@ -1065,6 +1065,42 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+/* A voided sale stays in the books, but reads as cancelled: dashed edge, struck
+   through total, and a red word on every receipt it prints. */
+.hist-row.is-voided {
+  background: var(--wash);
+  border-style: dashed;
+}
+
+.hist-row.is-voided .hist-total {
+  color: var(--ink-soft);
+  text-decoration: line-through;
+}
+
+.void-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--danger-wash);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.receipt-void {
+  margin: 10px 0 2px;
+  padding: 4px 0;
+  border: 2px dashed var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-align: center;
+}
+
 /* ----------------------------------------------------------- bottom tabs */
 .tabbar {
   height: 84px;

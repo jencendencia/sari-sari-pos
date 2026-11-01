@@ -309,7 +309,7 @@
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" id="printBtn">🖨 Print receipt</button>
           <span class="spacer"></span>
-          <button type="button" class="btn btn-green" id="newSaleBtn">Start a new sale</button>
+          <button type="button" class="btn btn-green" id="newSaleBtn" title="F1 — start a new sale">Start a new sale<kbd class="key">F1</kbd></button>
         </div>
       </div>
     </div>
@@ -366,10 +366,16 @@
               computer does not lose them. Keep the file on a USB stick or in
               your cloud storage.
             </p>
+            <p class="settings-note">
+              Restoring puts a backup back in place of everything now in the app.
+              What is here today is copied into the Backups folder first, so the
+              wrong file can always be undone.
+            </p>
             <div class="pic-status" id="backupStatus" hidden></div>
             <div class="update-actions">
               <button type="button" class="btn btn-blue" id="backupBtn">💾 Back up now</button>
               <button type="button" class="btn btn-ghost" id="backupFolderBtn" hidden>📂 Open the folder</button>
+              <button type="button" class="btn btn-ghost" id="restoreBtn">♻️ Restore a backup</button>
             </div>
           </div>
           <div class="modal-actions">

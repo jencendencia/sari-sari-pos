@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, shell } = requ
 const path = require('path');
 const fs = require('fs');
 const yazl = require('yazl');
+const yauzl = require('yauzl');
 
 const UA = 'SariSariPOS/1.0 (desktop point of sale)';
 
@@ -73,7 +74,8 @@ function openDb() {
       total REAL NOT NULL DEFAULT 0,
       paid REAL NOT NULL DEFAULT 0,
       change_due REAL NOT NULL DEFAULT 0,
-      count INTEGER NOT NULL DEFAULT 0
+      count INTEGER NOT NULL DEFAULT 0,
+      voided INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -97,8 +99,25 @@ function openDb() {
   if (productColumns && !productColumns.some((c) => c.name === 'hidden')) {
     db.exec('ALTER TABLE products ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
   }
+  // Databases created before voiding a sale existed need the column added.
+  const saleColumns = db.all('PRAGMA table_info(sales)');
+  if (saleColumns && !saleColumns.some((c) => c.name === 'voided')) {
+    db.exec('ALTER TABLE sales ADD COLUMN voided INTEGER NOT NULL DEFAULT 0');
+  }
   migrateLegacyJson();
   return db;
+}
+
+// Closing matters for restoring: the file cannot be swapped while SQLite still
+// has it open, and the next openDb() then reads the file that is on disk.
+function closeDb() {
+  if (!db) return;
+  try {
+    db.close();
+  } catch (err) {
+    /* already closed, or never fully opened */
+  }
+  db = null;
 }
 
 // One-time import of the old JSON file, if the shop already had data.
@@ -208,6 +227,7 @@ function rowToSale(row) {
     paid: row.paid,
     change: row.change_due,
     count: row.count,
+    voided: !!row.voided,
   };
 }
 
@@ -594,6 +614,9 @@ function createWindow() {
     fullscreen: true, // fills the screen from edge to edge
     backgroundColor: '#E8EDF1',
     title: 'Sari-Sari POS',
+    // Windows takes the taskbar icon from the window while the app runs
+    // unpackaged; the packaged exe carries the same picture.
+    icon: path.join(__dirname, 'src', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -610,6 +633,10 @@ function createWindow() {
 ipcMain.on('window:close', () => {
   if (win && !win.isDestroyed()) win.close();
 });
+
+// The taskbar groups this app by this id and finds its icon through it, so it
+// matches the appId the installer uses.
+app.setAppUserModelId('com.jencendencia.sarisaripos');
 
 app.whenReady().then(() => {
   protocol.handle('img', (request) => {
@@ -806,6 +833,43 @@ ipcMain.handle('sales:list', (_event, limit) => {
   return rows.map(rowToSale);
 });
 
+// Voiding a sale puts its items back on the shelf. The record stays in the books
+// — a sale that never happened is still something the shop wants to see — so it
+// is flagged rather than deleted, and it can only be voided once.
+ipcMain.handle('sales:void', (_event, id) => {
+  const conn = openDb();
+  const key = String(id || '');
+  const row = conn.get('SELECT * FROM sales WHERE id = ?', [key]);
+  if (!row) throw new Error('That sale is no longer in the records.');
+  if (row.voided) throw new Error('That sale has already been voided.');
+
+  let items = [];
+  try {
+    items = JSON.parse(row.items);
+  } catch (err) {
+    items = [];
+  }
+
+  const now = new Date().toISOString();
+  let returned = 0;
+  let missing = 0;
+  for (const line of Array.isArray(items) ? items : []) {
+    const qty = Math.max(1, Math.round(asNumber(line && line.qty, 1)));
+    const product = conn.get('SELECT id FROM products WHERE id = ?', [String((line && line.id) || '')]);
+    // An item deleted since the sale has nowhere to go back to; it is counted so
+    // the shopkeeper is told, rather than stock quietly going missing.
+    if (!product) {
+      missing += 1;
+      continue;
+    }
+    conn.run('UPDATE products SET stock = stock + ?, updated_at = ? WHERE id = ?', [qty, now, product.id]);
+    returned += qty;
+  }
+
+  conn.run('UPDATE sales SET voided = 1 WHERE id = ?', [key]);
+  return { id: key, returned, missing };
+});
+
 // ---------------------------------------------------------------------------
 // Frozen sales (hold and recall)
 // ---------------------------------------------------------------------------
@@ -970,6 +1034,170 @@ ipcMain.handle('db:backup', async () => {
 
 // Only ever opens the Backups folder — the renderer cannot ask for any path.
 ipcMain.handle('db:openFolder', () => shell.openPath(backupDir()));
+
+// ---------------------------------------------------------------------------
+// Restore: put a backup back. The live database is swapped for the chosen file
+// and the pictures zip is unpacked over the pictures folder. Whatever is on the
+// computer is copied into the Backups folder first, so a wrong file can be put
+// back exactly as it was.
+// ---------------------------------------------------------------------------
+function backupStamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+// Opened on its own, without becoming the live database, so a file that is not
+// this app's can be refused before anything is touched.
+function readBackupSummary(file) {
+  let probe = null;
+  try {
+    probe = new Database(file);
+    const tables = new Set(
+      probe.all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) => String(row.name))
+    );
+    if (!tables.has('products') || !tables.has('sales')) throw new Error('not a POS database');
+    const products = probe.get('SELECT COUNT(*) AS n FROM products');
+    const sales = probe.get('SELECT COUNT(*) AS n FROM sales');
+    return {
+      products: Number((products && products.n) || 0),
+      sales: Number((sales && sales.n) || 0),
+    };
+  } finally {
+    if (probe) {
+      try {
+        probe.close();
+      } catch (err) {
+        /* nothing left to close */
+      }
+    }
+  }
+}
+
+// Unpack a pictures backup into the pictures folder. Every name is reduced to
+// its base name and checked against the picture types, so a zip cannot write a
+// script outside the folder it belongs in.
+function extractPictures(zipFile, target) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipFile, { lazyEntries: true, autoClose: true }, (err, zip) => {
+      if (err) {
+        reject(new Error('the pictures backup could not be opened'));
+        return;
+      }
+      let saved = 0;
+      let skipped = 0;
+      zip.on('error', reject);
+      zip.on('entry', (entry) => {
+        const entryName = String(entry.fileName || '');
+        const name = path.basename(entryName);
+        const isPicture = Object.values(IMAGE_TYPES).includes(path.extname(name).toLowerCase());
+        if (!name || name.startsWith('.') || /\/$/.test(entryName) || !isPicture) {
+          skipped += 1;
+          zip.readEntry();
+          return;
+        }
+        zip.openReadStream(entry, (openErr, stream) => {
+          if (openErr) {
+            skipped += 1;
+            zip.readEntry();
+            return;
+          }
+          const out = fs.createWriteStream(path.join(target, name));
+          out.on('close', () => {
+            saved += 1;
+            zip.readEntry();
+          });
+          out.on('error', () => {
+            skipped += 1;
+            zip.readEntry();
+          });
+          stream.pipe(out);
+        });
+      });
+      zip.on('end', () => resolve({ saved, skipped }));
+      zip.readEntry();
+    });
+  });
+}
+
+ipcMain.handle('db:restore', async () => {
+  const picked = await dialog.showOpenDialog(win, {
+    title: 'Choose the backup to restore',
+    buttonLabel: 'Restore this backup',
+    defaultPath: backupDir(),
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Backups', extensions: ['db', 'zip'] },
+      { name: 'Database backup', extensions: ['db'] },
+      { name: 'Pictures backup', extensions: ['zip'] },
+    ],
+  });
+  if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+
+  const chosen = picked.filePaths;
+  const dbPath = chosen.find((file) => path.extname(file).toLowerCase() !== '.zip') || '';
+  const zips = chosen.filter((file) => path.extname(file).toLowerCase() === '.zip');
+  if (!dbPath) {
+    throw new Error('Choose the database file (.db) from the backup, as well as the pictures.');
+  }
+
+  let summary;
+  try {
+    summary = readBackupSummary(dbPath);
+  } catch (err) {
+    throw new Error('That file is not a Sari-Sari POS backup. Choose the .db file the backup made.');
+  }
+
+  const target = dbFile();
+  const safety = path.join(backupDir(), `before-restore ${backupStamp()}.db`);
+  const hadData = fs.existsSync(target) && fs.statSync(target).size > 0;
+  if (hadData) fs.copyFileSync(target, safety);
+
+  try {
+    closeDb();
+    // A journal left behind by the old file must never be applied to the new one.
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      if (fs.existsSync(target + suffix)) fs.unlinkSync(target + suffix);
+    }
+    fs.copyFileSync(dbPath, target);
+    openDb(); // reopens the restored file, and upgrades an older backup's schema
+  } catch (err) {
+    if (hadData) {
+      try {
+        fs.copyFileSync(safety, target);
+      } catch (copyErr) {
+        /* keep the original error */
+      }
+    }
+    closeDb();
+    try {
+      openDb();
+    } catch (openErr) {
+      /* the app reports the real problem when it next reads */
+    }
+    throw new Error('The backup could not be put in place. Your data was left as it was.');
+  }
+
+  let pictures = null;
+  if (zips.length) {
+    const dir = pictureDir();
+    let saved = 0;
+    let skipped = 0;
+    for (const zipFile of zips) {
+      const got = await extractPictures(zipFile, dir);
+      saved += got.saved;
+      skipped += got.skipped;
+    }
+    pictures = { saved, skipped };
+  }
+
+  return {
+    file: dbPath,
+    products: summary.products,
+    sales: summary.sales,
+    pictures,
+    safety: hadData ? safety : null,
+    at: new Date().toISOString(),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Pictures IPC

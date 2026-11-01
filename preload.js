@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   // Sales
   createSale: (items) => ipcRenderer.invoke('sales:create', items),
   listSales: (limit) => ipcRenderer.invoke('sales:list', limit),
+  voidSale: (id) => ipcRenderer.invoke('sales:void', id),
 
   // Frozen sales (hold and recall)
   listHolds: () => ipcRenderer.invoke('holds:list'),
@@ -28,6 +29,7 @@ contextBridge.exposeInMainWorld('api', {
   // Backup
   backupDatabase: () => ipcRenderer.invoke('db:backup'),
   openBackupFolder: () => ipcRenderer.invoke('db:openFolder'),
+  restoreBackup: () => ipcRenderer.invoke('db:restore'),
 
   // Updates
   appVersion: () => ipcRenderer.invoke('app:version'),

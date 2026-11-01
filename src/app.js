@@ -208,7 +208,16 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  // Any other dialog (a form, a confirm, a receipt) keeps its keys to itself.
+  // The receipt takes the same key: F1 starts the next sale without reaching
+  // for the mouse, which is the whole point at a busy counter.
+  if (modal && modal.id === 'modal-receipt') {
+    if (event.key !== 'F1') return;
+    event.preventDefault();
+    if (!$('#newSaleBtn').hidden) $('#newSaleBtn').click();
+    return;
+  }
+
+  // Any other dialog (a form, a confirm, an old receipt) keeps its keys.
   if (modal || state.screen !== 'sell') return;
 
   const action = sellScreenKeys[event.key];
@@ -1473,6 +1482,7 @@ function receiptHtml(sale) {
       timeStyle: 'short',
     })}</div>
     <div class="receipt-rule"></div>
+    ${sale.voided ? '<div class="receipt-void">VOIDED</div>' : ''}
     ${lines}
     <div class="receipt-rule"></div>
     <div class="receipt-line big"><span>TOTAL</span><span>${peso(sale.total)}</span></div>
@@ -1508,7 +1518,9 @@ function isToday(iso) {
 }
 
 function updateToday() {
-  const today = state.sales.filter((s) => isToday(s.at));
+  // A voided sale never happened as far as the day's takings go, so it is left
+  // out of every figure here and in the header.
+  const today = state.sales.filter((s) => !s.voided && isToday(s.at));
   $('#todayTotal').textContent = peso(today.reduce((sum, s) => sum + s.total, 0));
   $('#statSales').textContent = String(today.length);
   $('#statTotal').textContent = peso(today.reduce((sum, s) => sum + s.total, 0));
@@ -1530,25 +1542,66 @@ function renderHistory() {
         ? when.toLocaleTimeString('en-PH', { timeStyle: 'short' })
         : when.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
       return `
-      <div class="hist-row" data-id="${esc(sale.id)}">
+      <div class="hist-row${sale.voided ? ' is-voided' : ''}" data-id="${esc(sale.id)}">
         <div class="hist-when">${label}</div>
-        <div class="hist-items">${sale.count || 0} item(s)</div>
+        <div class="hist-items">${sale.count || 0} item(s)${
+          sale.voided ? '<span class="void-tag">Voided</span>' : ''
+        }</div>
         <div class="hist-total">${peso(sale.total)}</div>
         <button type="button" class="btn btn-ghost" data-act="view">See receipt</button>
+        ${
+          sale.voided
+            ? ''
+            : '<button type="button" class="btn btn-ghost" data-act="void">Void sale</button>'
+        }
       </div>`;
     })
     .join('');
 }
 
 $('#histList').addEventListener('click', (event) => {
-  const button = event.target.closest('button[data-act="view"]');
+  const button = event.target.closest('button[data-act]');
   if (!button) return;
   const row = button.closest('.hist-row');
   const sale = state.sales.find((s) => s.id === row.dataset.id);
   if (!sale) return;
+  if (button.dataset.act === 'void') {
+    voidSale(sale);
+    return;
+  }
   $('#viewPaper').innerHTML = receiptHtml(sale);
   openModal('modal-view');
 });
+
+// Voiding puts the items back on the shelf and keeps the record, flagged: the
+// day's takings stop counting it, but the shop can still see that it happened.
+async function voidSale(sale) {
+  const ok = await confirmBox(
+    'Void this sale?',
+    `${peso(sale.total)} — its ${sale.count || 0} item(s) go back into the inventory and the sale is marked voided.`,
+    'Yes, void it'
+  );
+  if (!ok) return;
+  try {
+    const result = await window.api.voidSale(sale.id);
+    sale.voided = true;
+    // Stock moved on the main side, so the inventory in memory is now stale.
+    state.products = (await window.api.listProducts()) || [];
+    renderInventory();
+    renderHistory();
+    updateToday();
+    beep('done');
+    const back = `${(result && result.returned) || 0} item(s) back in stock`;
+    toast(
+      result && result.missing
+        ? `Sale voided — ${back}. ${result.missing} item(s) are no longer in the inventory.`
+        : `Sale voided — ${back}.`
+    );
+  } catch (err) {
+    beep('bad');
+    toast(err.message || 'The sale could not be voided.', { error: true, duration: 7000 });
+  }
+}
 
 /* --------------------------------------------------------------- settings */
 $('#settingsBtn').addEventListener('click', () => {
@@ -1682,6 +1735,58 @@ $('#backupBtn').addEventListener('click', async () => {
 });
 
 $('#backupFolderBtn').addEventListener('click', () => window.api.openBackupFolder());
+
+// Restoring replaces everything, so it asks first and names what will go. The
+// conversation with the file picker happens in the main process, which is also
+// where the current data is copied aside before anything is overwritten.
+$('#restoreBtn').addEventListener('click', async () => {
+  const ok = await confirmBox(
+    'Restore a backup?',
+    'The products, sales and pictures in this app are replaced by the backup you choose. What is here now is copied into the Backups folder first, so it can be put back.',
+    'Yes, choose the file'
+  );
+  if (!ok) return;
+
+  const button = $('#restoreBtn');
+  button.disabled = true;
+  backupStatus('Choose the database from the backup, and its pictures zip if you have it…');
+  try {
+    const result = await window.api.restoreBackup();
+    if (!result || result.canceled) {
+      backupStatus('');
+      return;
+    }
+
+    // The restored copy is the truth now: the basket may hold items that no
+    // longer exist, so it is emptied before everything is read back.
+    state.cart = [];
+    await init();
+    renderInventory();
+    renderHistory();
+
+    const lines = [
+      `Restored ${result.products} product(s) and ${result.sales} sale(s) from ${result.file}`,
+    ];
+    if (result.pictures) {
+      lines.push(
+        `Pictures: ${result.pictures.saved} restored${
+          result.pictures.skipped ? `, ${result.pictures.skipped} file(s) skipped` : ''
+        }.`
+      );
+    } else {
+      lines.push('Pictures: none chosen, so the pictures already here were kept.');
+    }
+    if (result.safety) lines.push(`Before the restore, saved here: ${result.safety}`);
+    backupStatus(lines.join('\n'), 'ok');
+    beep('done');
+    toast('Backup restored.');
+  } catch (err) {
+    backupStatus(`The backup could not be restored: ${errText(err)}`, 'error');
+    beep('bad');
+  } finally {
+    button.disabled = false;
+  }
+});
 
 /* ---------------------------------------------------------------- window */
 // The window has no system title bar, so this ✕ in the header is the only

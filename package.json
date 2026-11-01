@@ -16,6 +16,7 @@
   "dependencies": {
     "electron-updater": "^6.8.11",
     "node-sqlite3-wasm": "^0.8.61",
+    "yauzl": "^3.4.0",
     "yazl": "^3.3.1"
   },
   "build": {
@@ -31,10 +32,11 @@
       "package.json"
     ],
     "win": {
+      "icon": "src/icon.png",
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

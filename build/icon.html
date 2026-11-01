@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>icon source</title>
+    <!--
+      The icon exactly as it is drawn. build/render-icon.js photographs this page
+      at 512 x 512 with a hidden Electron window, then build/make-icon.js rounds
+      the corners and writes src/icon.png.
+
+      The peso sign is set in type rather than plotted by hand, so the bowl, the
+      stem and the two crossbars carry a type designer's optical corrections.
+      Change the font stack, weight or size below and re-run the two scripts to
+      try another cut.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 512px;
+        height: 512px;
+        overflow: hidden;
+      }
+
+      .tile {
+        position: relative;
+        width: 512px;
+        height: 512px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(166deg, #1b4d46 0%, #123b36 46%, #092321 100%);
+      }
+
+      /* a soft light from the top left, the way a painted sign catches a bulb */
+      .tile::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(120% 80% at 28% 10%, rgba(255, 255, 255, 0.1), transparent 62%);
+      }
+
+      .mark {
+        position: relative;
+        z-index: 1;
+        font-family: "Segoe UI", "Arial", system-ui, sans-serif;
+        /* 600 keeps the bowl's counters open at icon size; 700 closes them
+           into slits, and 900 turns the mark into a blob at 16 px */
+        font-weight: 600;
+        font-size: 372px;
+        line-height: 1;
+        color: #ffc24b;
+        /* the crossbars sit below the cap height, so the mark is nudged down to
+           land on the tile's optical centre rather than its geometric one */
+        transform: translateY(-2.6%);
+        -webkit-font-smoothing: antialiased;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tile"><span class="mark">₱</span></div>
+  </body>
+</html>
