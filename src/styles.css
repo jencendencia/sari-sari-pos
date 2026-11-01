@@ -1065,6 +1065,24 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+.hist-money {
+  min-width: 130px;
+  text-align: right;
+}
+
+/* Small and jade: profit is the number the shopkeeper wants to glance at, but
+   the money taken is still the headline of the row. */
+.hist-profit {
+  color: var(--go);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat:nth-child(4) {
+  border-left-color: var(--chrome-2, #16443f);
+}
+
 /* A voided sale stays in the books, but reads as cancelled: dashed edge, struck
    through total, and a red word on every receipt it prints. */
 .hist-row.is-voided {
@@ -1101,7 +1119,141 @@ main {
   text-align: center;
 }
 
-/* ----------------------------------------------------------- bottom tabs */
+/* --------------------------------------------------------------- reports */
+/* The controls read as one instrument: a segmented period control, then the
+   dates it filled in, then the count, then the one action. Nothing floats. */
+.report-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 14px;
+  padding: 11px 13px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+}
+
+.rep-presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--wash);
+  overflow: hidden;
+}
+
+.rep-chip {
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.rep-chip:first-child {
+  border-left: 0;
+}
+
+.rep-chip:hover {
+  background: #e6eeec;
+  color: var(--ink);
+}
+
+.rep-chip:focus-visible {
+  outline: 2px solid var(--chrome);
+  outline-offset: -3px;
+}
+
+.rep-chip.active,
+.rep-chip.active:hover {
+  background: var(--chrome);
+  color: #fff;
+  font-weight: 700;
+}
+
+.rep-dates {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--paper);
+}
+
+.rep-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.rep-date input {
+  font: inherit;
+  font-size: 15px;
+  padding: 3px 1px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.rep-date input:focus-visible {
+  outline: 2px solid var(--chrome);
+  outline-offset: 2px;
+  border-radius: 5px;
+}
+
+.rep-sep {
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.rep-note {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  color: var(--ink-soft);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A screen is a block by default; this one stacks the controls above the paper
+   and lets the paper take whatever height is left. */
+#screen-reports.active {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The desk: a quiet tray so a white page reads as a page, not as a panel. */
+.report-desk {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.report-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--paper);
+}
+
 .tabbar {
   height: 84px;
   background: var(--chrome);
@@ -1219,6 +1371,13 @@ main {
 .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* The price, the cost you paid and the price on the pack sit in one row. */
+.row3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 

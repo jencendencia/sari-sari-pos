@@ -41,6 +41,7 @@ const state = {
   editingImage: null,
   showHidden: false,
   scanHit: null,
+  reportHtml: '',
 };
 
 /* ------------------------------------------------------------------ sound */
@@ -721,6 +722,10 @@ function showScreen(name) {
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.screen === name));
   if (name === 'inventory') renderInventory();
   if (name === 'history') renderHistory();
+  if (name === 'reports') {
+    if (!$('#repFrom').value || !$('#repTo').value) setReportPreset('month');
+    else renderReports();
+  }
   focusScanner();
 }
 
@@ -1525,6 +1530,36 @@ function updateToday() {
   $('#statSales').textContent = String(today.length);
   $('#statTotal').textContent = peso(today.reduce((sum, s) => sum + s.total, 0));
   $('#statItems').textContent = String(today.reduce((sum, s) => sum + (s.count || 0), 0));
+
+  // Profit only counts the sales that know what they cost. Selling an item with
+  // no original price is not free stock, so those sales are left out rather than
+  // counted as pure profit.
+  const priced = today.filter((s) => saleHasCost(s));
+  $('#statProfit').textContent = priced.length
+    ? peso(priced.reduce((sum, s) => sum + saleProfit(s), 0))
+    : '—';
+}
+
+// Profit is selling price minus what the shop paid for the item — the "Original
+// price" typed on the product — frozen onto the line on the day of the sale, so
+// an old receipt keeps the profit it really made after prices change. Sales
+// recorded while that figure was briefly called "cost" carry it under that name.
+function lineCost(line) {
+  const original = Number(line && line.originalPrice);
+  if (original > 0) return original;
+  return Math.max(0, Number(line && line.cost) || 0);
+}
+
+function saleHasCost(sale) {
+  return (sale.items || []).some((line) => lineCost(line) > 0);
+}
+
+function saleProfit(sale) {
+  const paid = (sale.items || []).reduce(
+    (sum, line) => sum + lineCost(line) * (Number(line.qty) || 0),
+    0
+  );
+  return Math.round((sale.total - paid) * 100) / 100;
 }
 
 function renderHistory() {
@@ -1547,7 +1582,16 @@ function renderHistory() {
         <div class="hist-items">${sale.count || 0} item(s)${
           sale.voided ? '<span class="void-tag">Voided</span>' : ''
         }</div>
-        <div class="hist-total">${peso(sale.total)}</div>
+        <div class="hist-money">
+          <div class="hist-total">${peso(sale.total)}</div>
+          ${
+            !sale.voided && saleHasCost(sale)
+              ? `<div class="hist-profit">${saleProfit(sale) < 0 ? '−' : ''}${peso(
+                  Math.abs(saleProfit(sale))
+                )} profit</div>`
+              : ''
+          }
+        </div>
         <button type="button" class="btn btn-ghost" data-act="view">See receipt</button>
         ${
           sale.voided
@@ -1789,6 +1833,482 @@ $('#restoreBtn').addEventListener('click', async () => {
 });
 
 /* ---------------------------------------------------------------- window */
+/* --------------------------------------------------------------- reports */
+// Everything down to the "reports screen" line is pure: it takes sales and
+// products and returns data plus a complete printable document, with no DOM.
+
+const localIsoDate = (date) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+const endOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+
+function presetRange(preset) {
+  const now = new Date();
+  if (preset === 'yesterday') {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    return { from: startOfDay(day), to: endOfDay(day) };
+  }
+  if (preset === 'week') {
+    return {
+      from: startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)),
+      to: endOfDay(now),
+    };
+  }
+  if (preset === 'lastmonth') {
+    return {
+      from: startOfDay(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+      to: endOfDay(new Date(now.getFullYear(), now.getMonth(), 0)),
+    };
+  }
+  if (preset === 'month') {
+    return {
+      from: startOfDay(new Date(now.getFullYear(), now.getMonth(), 1)),
+      to: endOfDay(now),
+    };
+  }
+  return { from: startOfDay(now), to: endOfDay(now) };
+}
+
+function hourLabel(hour) {
+  const suffix = hour < 12 ? 'am' : 'pm';
+  const shown = hour % 12 === 0 ? 12 : hour % 12;
+  return `${shown} ${suffix}`;
+}
+
+function aggregateReport(sales, products, from, to) {
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const all = Array.isArray(sales) ? sales : [];
+  const live = all.filter((sale) => !sale.voided);
+
+  const totals = { count: live.length, revenue: 0, items: 0, profit: 0, priced: 0 };
+  const byProduct = new Map();
+  const byHour = Array.from({ length: 24 }, () => ({ count: 0, revenue: 0 }));
+  const byDay = new Map();
+
+  for (const sale of live) {
+    const profit = saleHasCost(sale) ? saleProfit(sale) : null;
+    totals.revenue += sale.total || 0;
+    totals.items += sale.count || 0;
+    if (profit !== null) {
+      totals.profit += profit;
+      totals.priced += 1;
+    }
+
+    const when = new Date(sale.at);
+    const dayKey = localIsoDate(when);
+    const day = byDay.get(dayKey) || { count: 0, revenue: 0, profit: 0 };
+    day.count += 1;
+    day.revenue += sale.total || 0;
+    if (profit !== null) day.profit += profit;
+    byDay.set(dayKey, day);
+
+    const hour = byHour[when.getHours()];
+    hour.count += 1;
+    hour.revenue += sale.total || 0;
+
+    for (const line of sale.items || []) {
+      const qty = Number(line.qty) || 0;
+      const entry = byProduct.get(line.id) || {
+        id: line.id,
+        name: line.name || 'Unknown item',
+        qty: 0,
+        revenue: 0,
+        cost: 0,
+        known: false,
+      };
+      entry.qty += qty;
+      entry.revenue += (Number(line.price) || 0) * qty;
+      const paid = lineCost(line);
+      if (paid > 0) {
+        entry.cost += paid * qty;
+        entry.known = true;
+      }
+      byProduct.set(line.id, entry);
+    }
+  }
+
+  const best = [...byProduct.values()]
+    .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue)
+    .slice(0, 15);
+
+  // Items that still have stock and did not move at all in this range: that is
+  // money asleep on the shelf.
+  const slow = (Array.isArray(products) ? products : [])
+    .filter((p) => !p.hidden && (Number(p.stock) || 0) > 0 && !byProduct.has(p.id))
+    .map((p) => ({
+      name: p.name,
+      stock: Number(p.stock) || 0,
+      value: round2((Number(p.stock) || 0) * (Number(p.price) || 0)),
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 15);
+
+  const days = [];
+  const cursor = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const last = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  while (cursor <= last) {
+    const key = localIsoDate(cursor);
+    const got = byDay.get(key);
+    days.push({
+      key,
+      count: got ? got.count : 0,
+      revenue: round2(got ? got.revenue : 0),
+      profit: round2(got ? got.profit : 0),
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const busiest = byHour.reduce((bestIndex, hour, index) =>
+    hour.count > byHour[bestIndex].count ? index : bestIndex, 0);
+
+  return {
+    totals: {
+      count: totals.count,
+      revenue: round2(totals.revenue),
+      items: totals.items,
+      profit: round2(totals.profit),
+      voided: all.length - live.length,
+    },
+    hasCost: totals.priced > 0,
+    average: totals.count ? round2(totals.revenue / totals.count) : 0,
+    best,
+    slow,
+    byHour,
+    days,
+    busiest,
+  };
+}
+
+// One document, used twice: shown in the frame on screen, and handed to the PDF
+// printer unchanged. It carries its own styles so the paper never depends on the
+// app's dark theme.
+// One document, used twice: shown in the frame on screen, and handed to the PDF
+// printer unchanged. It carries its own styles, so the paper looks the same
+// whether or not the shop has a connection when it is made.
+//
+// The sheet is laid out like the store's own tally book: the shop name set in a
+// book serif, the money taken printed on the amber price-board strip, and the
+// tables ruled in pine ink with tabular figures, so the columns line up the way
+// they would in a written ledger.
+// One document, used twice: shown in the frame on screen, and handed to the PDF
+// printer unchanged. It carries its own styles, so the paper looks the same
+// whether or not the shop has a connection when it is made.
+//
+// The sheet is laid out like the store's own tally book: the shop name set in a
+// book serif, the money taken printed on the amber price-board strip, and the
+// tables ruled in pine ink with tabular figures, so the columns line up the way
+// they would in a written ledger.
+function reportHtml({ from, to, data, storeName }) {
+  const sameDay = localIsoDate(from) === localIsoDate(to);
+  const rangeText = sameDay
+    ? 'Sales on ' + from.toLocaleDateString('en-PH', { dateStyle: 'long' })
+    : 'Sales from ' + `${from.toLocaleDateString('en-PH', { dateStyle: 'medium' })} to ${to.toLocaleDateString('en-PH', {
+        dateStyle: 'medium',
+      })}`;
+  const generated = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+  const dash = '<span class="dash">—</span>';
+  const rule = '<span class="rule"></span>';
+
+  const bestRows = data.best.length
+    ? data.best
+        .map(
+          (item, index) => `
+      <tr>
+        <td class="rank">${index + 1}</td>
+        <td>${esc(item.name)}</td>
+        <td class="num">${item.qty}</td>
+        <td class="num">${peso(item.revenue)}</td>
+        <td class="num">${item.known ? peso(item.revenue - item.cost) : dash}</td>
+      </tr>`
+        )
+        .join('')
+    : '<tr><td colspan="5" class="none">Nothing was sold in this range.</td></tr>';
+
+  const slowRows = data.slow.length
+    ? data.slow
+        .map(
+          (item) => `
+      <tr>
+        <td>${esc(item.name)}</td>
+        <td class="num">${item.stock}</td>
+        <td class="num">${peso(item.value)}</td>
+      </tr>`
+        )
+        .join('')
+    : '<tr><td colspan="3" class="none">Everything with stock sold at least once.</td></tr>';
+
+  const peak = data.byHour.reduce((max, hour) => Math.max(max, hour.revenue), 0) || 1;
+  const hourRows = data.byHour
+    .map((hour, index) =>
+      hour.count
+        ? `
+      <tr>
+        <td class="hour">${hourLabel(index)}</td>
+        <td class="bar-cell"><span class="track"><span class="bar" style="width:${Math.max(2, Math.round((hour.revenue / peak) * 100))}%"></span></span></td>
+        <td class="num">${hour.count}</td>
+        <td class="num">${peso(hour.revenue)}</td>
+      </tr>`
+        : ''
+    )
+    .join('');
+
+  const dayRows = data.days
+    .map((day) => {
+      const label = new Date(`${day.key}T00:00:00`).toLocaleDateString('en-PH', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+      });
+      return `
+      <tr>
+        <td>${esc(label)}</td>
+        <td class="num">${day.count}</td>
+        <td class="num">${peso(day.revenue)}</td>
+        <td class="num">${data.hasCost ? peso(day.profit) : dash}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const voidLine = data.totals.voided
+    ? `${data.totals.voided} voided ${data.totals.voided === 1 ? 'sale' : 'sales'} left out`
+    : 'No voided sales';
+  const average = data.totals.count
+    ? `about ${peso(data.average)} a sale`
+    : 'nothing sold in this range';
+  const profitNote = data.hasCost ? 'after what you paid' : 'no original prices yet';
+  const busiest =
+    data.byHour[data.busiest] && data.byHour[data.busiest].count
+      ? `<span class="sub">Busiest at ${hourLabel(data.busiest)}</span>`
+      : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>${esc(storeName)} sales report</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px 22px;
+    font-family: "Segoe UI", system-ui, Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.45;
+    color: #14211f;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  h1, h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 400; }
+
+  .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+  .shop-name { font-size: 22pt; line-height: 1.05; letter-spacing: -0.015em; }
+  .shop-line { margin: 4px 0 0; font-size: 10.5pt; color: #4a5c58; }
+  .made { margin: 0; font-size: 8.5pt; line-height: 1.5; color: #6b7b78; text-align: right; white-space: nowrap; }
+
+  /* The price-board strip from the app's own header: the one loud thing here. */
+  .till {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 14px;
+    padding: 10px 16px;
+    background: #ffc24b;
+    border-radius: 3px;
+  }
+  .till-taken { display: flex; flex-direction: column; }
+  .till-label { font-size: 8.5pt; color: #6b4a00; }
+  .till-money { font-size: 22pt; font-weight: 700; line-height: 1.05; color: #241a00; font-variant-numeric: tabular-nums; }
+  .till-average { font-size: 8.5pt; color: #6b4a00; }
+  .till-facts { display: flex; gap: 24px; margin: 0; }
+  .till-facts div { text-align: right; }
+  .till-facts dt { font-size: 8.5pt; color: #6b4a00; }
+  .till-facts dd { margin: 0; font-size: 13pt; font-weight: 700; line-height: 1.2; color: #241a00; font-variant-numeric: tabular-nums; }
+  .fact-note { display: block; font-size: 8pt; font-weight: 400; color: #6b4a00; }
+
+  h2 { display: flex; align-items: center; gap: 10px; margin: 22px 0 4px; font-size: 12.5pt; break-after: avoid; }
+  h2 .sub { font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; color: #6b7b78; }
+  .rule { flex: 1; height: 1px; background: #c3d1ce; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 4px 6px;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #4a5c58;
+    text-align: left;
+    border-bottom: 1.2px solid #0c2b29;
+  }
+  tbody td { padding: 5px 6px; border-bottom: 1px solid #e6eceb; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.rank, td.rank { width: 24px; text-align: right; color: #93a29f; font-variant-numeric: tabular-nums; }
+  tr { break-inside: avoid; }
+  .none { padding: 8px 6px; color: #6b7b78; }
+  .dash { color: #a9b6b3; }
+  .hour { width: 58px; color: #4a5c58; font-variant-numeric: tabular-nums; }
+  .bar-cell { width: 46%; }
+  .track { display: block; height: 9px; background: #eef3f2; border-radius: 2px; }
+  .bar { display: block; height: 9px; background: #0e8f5a; border-radius: 2px; }
+
+  .foot { margin: 22px 0 0; padding-top: 8px; border-top: 1px solid #c3d1ce; font-size: 8pt; color: #6b7b78; }
+</style>
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <h1 class="shop-name">${esc(storeName)}</h1>
+      <p class="shop-line">${esc(rangeText)}</p>
+    </div>
+    <p class="made">Made ${esc(generated)}<br />${esc(voidLine)}</p>
+  </header>
+
+  <section class="till">
+    <div class="till-taken">
+      <span class="till-label">Money taken</span>
+      <span class="till-money">${peso(data.totals.revenue)}</span>
+      <span class="till-average">${esc(average)}</span>
+    </div>
+    <dl class="till-facts">
+      <div><dt>Sales</dt><dd>${data.totals.count}</dd></div>
+      <div><dt>Items sold</dt><dd>${data.totals.items}</dd></div>
+      <div><dt>Profit</dt><dd>${data.hasCost ? peso(data.totals.profit) : dash}<span class="fact-note">${esc(profitNote)}</span></dd></div>
+    </dl>
+  </section>
+
+  <h2>Best sellers${rule}</h2>
+  <table>
+    <thead><tr><th class="rank">#</th><th>Item</th><th class="num">Sold</th><th class="num">Sales</th><th class="num">Profit</th></tr></thead>
+    <tbody>${bestRows}</tbody>
+  </table>
+
+  <h2>Still on the shelf${rule}</h2>
+  <table>
+    <thead><tr><th>Item</th><th class="num">In stock</th><th class="num">Shelf value</th></tr></thead>
+    <tbody>${slowRows}</tbody>
+  </table>
+
+  ${
+    hourRows
+      ? `<h2>Sales by hour${busiest}${rule}</h2>
+  <table>
+    <thead><tr><th>Hour</th><th></th><th class="num">Sales</th><th class="num">Money</th></tr></thead>
+    <tbody>${hourRows}</tbody>
+  </table>`
+      : ''
+  }
+
+  ${
+    data.days.length > 1
+      ? `<h2>Day by day${rule}</h2>
+  <table>
+    <thead><tr><th>Day</th><th class="num">Sales</th><th class="num">Money</th><th class="num">Profit</th></tr></thead>
+    <tbody>${dayRows}</tbody>
+  </table>`
+      : ''
+  }
+
+  <p class="foot">Made by Sari-Sari POS from the sales recorded in this app. Voided sales are kept out of every figure above.</p>
+</body>
+</html>`;
+}
+
+/* ------------------------------------------------------- reports screen */
+let reportToken = 0;
+
+function reportInputs() {
+  const from = new Date(`${$('#repFrom').value}T00:00:00`);
+  const to = new Date(`${$('#repTo').value}T00:00:00`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  return { from: startOfDay(from), to: endOfDay(to) };
+}
+
+function setReportPreset(preset) {
+  const range = presetRange(preset);
+  $('#repFrom').value = localIsoDate(range.from);
+  $('#repTo').value = localIsoDate(range.to);
+  $$('.rep-chip').forEach((chip) => chip.classList.toggle('active', chip.dataset.preset === preset));
+  renderReports();
+}
+
+// "1 sale", "5 sales", and the voided ones named only when there are some.
+function describeSales(count, voided) {
+  const sales = `${count} ${count === 1 ? 'sale' : 'sales'}`;
+  return voided ? `${sales} · ${voided} voided left out` : sales;
+}
+
+async function renderReports() {
+  const range = reportInputs();
+  if (!range) {
+    $('#repNote').textContent = 'Choose both dates.';
+    return;
+  }
+  if (range.from > range.to) {
+    $('#repNote').textContent = 'The \"from\" date is after the \"to\" date.';
+    return;
+  }
+
+  const mine = ++reportToken;
+  $('#repNote').textContent = 'Counting the sales…';
+  try {
+    const sales = (await window.api.salesBetween(range.from.toISOString(), range.to.toISOString())) || [];
+    if (mine !== reportToken) return; // a newer range was asked for while this ran
+    const data = aggregateReport(sales, state.products, range.from, range.to);
+    state.reportHtml = reportHtml({
+      from: range.from,
+      to: range.to,
+      data,
+      storeName: state.settings.storeName,
+    });
+    $('#reportFrame').srcdoc = state.reportHtml;
+    $('#repNote').textContent = describeSales(sales.length, data.totals.voided);
+  } catch (err) {
+    $('#repNote').textContent = errText(err);
+  }
+}
+
+$('#repPresets').addEventListener('click', (event) => {
+  const chip = event.target.closest('.rep-chip');
+  if (chip) setReportPreset(chip.dataset.preset);
+});
+
+['#repFrom', '#repTo'].forEach((selector) => {
+  $(selector).addEventListener('change', () => {
+    $$('.rep-chip').forEach((chip) => chip.classList.remove('active'));
+    renderReports();
+  });
+});
+
+// The PDF is made in the main process from the very same document shown in the
+// frame, so the file and the screen can never disagree.
+$('#repPdfBtn').addEventListener('click', async () => {
+  if (!state.reportHtml) {
+    toast('Open a report before saving it.');
+    return;
+  }
+  const range = reportInputs();
+  const name = range
+    ? `Sari-Sari report ${localIsoDate(range.from)} to ${localIsoDate(range.to)}`
+    : 'Sari-Sari report';
+  const button = $('#repPdfBtn');
+  button.disabled = true;
+  try {
+    const result = await window.api.saveReportPdf(state.reportHtml, name);
+    if (result && result.canceled) return;
+    beep('done');
+    toast(`PDF saved: ${result.file}`, { duration: 10000 });
+  } catch (err) {
+    beep('bad');
+    toast(errText(err), { error: true, duration: 7000 });
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // The window has no system title bar, so this ✕ in the header is the only
 // way to close the app.
 $('#closeBtn').addEventListener('click', () => window.api.closeWindow());

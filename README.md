@@ -43,7 +43,13 @@ the stock list honest without typing much.
   beside the selling price when adding or editing a product. It shows in the
   inventory list under the price, and is **never shown on the Sell screen**:
   the cart, the receipt and the price checker only ever use the selling price.
-  Leave it empty and no extra line appears.
+  Leave it empty and no extra line appears. It is also what **profit** comes
+  from: selling price minus original price, times how many were sold. Five
+  Onion Rings at ₱9.00 with an original price of ₱7.40 makes ₱45.00 of sales
+  and ₱37.00 of stock, so ₱8.00 of profit. The figure is **frozen onto each
+  sale when it is rung up**, so changing a price later never rewrites an old
+  day's profit. Leave it blank and the sale shows no profit at all rather than
+  pretending every peso taken was earned.
 - Scanning a barcode that is not in the inventory **looks it up online**: the
   name, brand, size and a product picture are filled in. If the catalogue has
   a price for it, the **SRP is converted to pesos and put in the Price field**

@@ -100,8 +100,36 @@
             <div class="stat-label">Items sold today</div>
             <div class="stat-value" id="statItems">0</div>
           </div>
+          <div class="stat">
+            <div class="stat-label">Profit today</div>
+            <div class="stat-value" id="statProfit">—</div>
+          </div>
         </div>
         <div class="hist-list" id="histList"></div>
+      </section>
+
+      <!-- ========================================================= REPORTS -->
+      <section class="screen" id="screen-reports">
+        <div class="report-bar">
+          <div class="rep-presets" id="repPresets" role="group" aria-label="Period">
+            <button type="button" class="rep-chip" data-preset="today">Today</button>
+            <button type="button" class="rep-chip" data-preset="yesterday">Yesterday</button>
+            <button type="button" class="rep-chip" data-preset="week">Last 7 days</button>
+            <button type="button" class="rep-chip active" data-preset="month">This month</button>
+            <button type="button" class="rep-chip" data-preset="lastmonth">Last month</button>
+          </div>
+          <div class="rep-dates">
+            <label class="rep-date">From <input id="repFrom" type="date" /></label>
+            <span class="rep-sep" aria-hidden="true">to</span>
+            <label class="rep-date">To <input id="repTo" type="date" /></label>
+          </div>
+          <span class="rep-note" id="repNote"></span>
+          <button type="button" class="btn btn-blue btn-sm" id="repPdfBtn">📄 Save as PDF</button>
+        </div>
+
+        <div class="report-desk">
+          <iframe class="report-frame" id="reportFrame" title="Report preview"></iframe>
+        </div>
       </section>
     </main>
 
@@ -109,6 +137,7 @@
       <button class="tab active" data-screen="sell"><span class="tab-icon">🛒</span> Sell</button>
       <button class="tab" data-screen="inventory"><span class="tab-icon">📦</span> Inventory</button>
       <button class="tab" data-screen="history"><span class="tab-icon">🧾</span> Sales</button>
+      <button class="tab" data-screen="reports"><span class="tab-icon">📊</span> Reports</button>
     </nav>
 
     <div class="toast" id="toast" hidden><span id="toastText"></span></div>
@@ -142,7 +171,7 @@
             <label class="field">
               <span>Original price (₱)</span>
               <input id="pOriginal" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
-              <small>What you paid — not shown on Sell</small>
+              <small>What you paid — your profit is worked out from this</small>
             </label>
           </div>
 

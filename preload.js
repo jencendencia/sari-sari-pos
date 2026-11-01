@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   createSale: (items) => ipcRenderer.invoke('sales:create', items),
   listSales: (limit) => ipcRenderer.invoke('sales:list', limit),
   voidSale: (id) => ipcRenderer.invoke('sales:void', id),
+  salesBetween: (from, to) => ipcRenderer.invoke('sales:between', from, to),
 
   // Frozen sales (hold and recall)
   listHolds: () => ipcRenderer.invoke('holds:list'),
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   backupDatabase: () => ipcRenderer.invoke('db:backup'),
   openBackupFolder: () => ipcRenderer.invoke('db:openFolder'),
   restoreBackup: () => ipcRenderer.invoke('db:restore'),
+  saveReportPdf: (html, name) => ipcRenderer.invoke('reports:pdf', { html, name }),
 
   // Updates
   appVersion: () => ipcRenderer.invoke('app:version'),

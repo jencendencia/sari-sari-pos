@@ -59,6 +59,7 @@ function openDb() {
       name TEXT NOT NULL,
       barcode TEXT NOT NULL DEFAULT '',
       price REAL NOT NULL DEFAULT 0,
+      cost REAL NOT NULL DEFAULT 0,
       original_price REAL NOT NULL DEFAULT 0,
       stock INTEGER NOT NULL DEFAULT 0,
       low_stock INTEGER NOT NULL DEFAULT 5,
@@ -99,6 +100,16 @@ function openDb() {
   if (productColumns && !productColumns.some((c) => c.name === 'hidden')) {
     db.exec('ALTER TABLE products ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
   }
+  // Databases created before the cost price existed need the column added.
+  if (productColumns && !productColumns.some((c) => c.name === 'cost')) {
+    db.exec('ALTER TABLE products ADD COLUMN cost REAL NOT NULL DEFAULT 0');
+  }
+  // Profit is the selling price minus the "Original price" (what the shop paid),
+  // so anything typed into the short-lived Cost price field is moved across
+  // instead of being stranded under a name nothing reads any more.
+  db.exec(
+    'UPDATE products SET original_price = cost WHERE (original_price IS NULL OR original_price = 0) AND cost > 0'
+  );
   // Databases created before voiding a sale existed need the column added.
   const saleColumns = db.all('PRAGMA table_info(sales)');
   if (saleColumns && !saleColumns.some((c) => c.name === 'voided')) {
@@ -803,6 +814,7 @@ ipcMain.handle('sales:create', (_event, payload) => {
       id: product.id,
       name: product.name,
       price: Math.max(0, asNumber(product.price)),
+      originalPrice: Math.max(0, asNumber(product.originalPrice)),
       qty,
       image: product.image || null,
     });
@@ -830,6 +842,17 @@ ipcMain.handle('sales:create', (_event, payload) => {
 ipcMain.handle('sales:list', (_event, limit) => {
   const max = Math.max(1, Math.min(2000, asNumber(limit, 500)));
   const rows = openDb().all('SELECT * FROM sales ORDER BY rowid DESC LIMIT ?', [max]);
+  return rows.map(rowToSale);
+});
+
+// A report needs the sales inside its own date range, not the newest 500, so it
+// asks for exactly that window. Timestamps are stored as ISO strings, which
+// compare correctly as text.
+ipcMain.handle('sales:between', (_event, from, to) => {
+  const first = String(from || '');
+  const last = String(to || '');
+  if (!first || !last) throw new Error('Pick the dates for the report.');
+  const rows = openDb().all('SELECT * FROM sales WHERE at >= ? AND at <= ? ORDER BY at ASC LIMIT 5000', [first, last]);
   return rows.map(rowToSale);
 });
 
@@ -1202,6 +1225,55 @@ ipcMain.handle('db:restore', async () => {
 // ---------------------------------------------------------------------------
 // Pictures IPC
 // ---------------------------------------------------------------------------
+// Reports: the page itself is built in the renderer, and turned into a PDF here,
+// so the shop gets a real file to save, print or send without a print dialog.
+ipcMain.handle('reports:pdf', async (_event, payload) => {
+  const html = String((payload && payload.html) || '');
+  if (!html.trim()) throw new Error('Open a report before saving it.');
+
+  const suggested =
+    String((payload && payload.name) || 'sari-sari-report')
+      .replace(/[^A-Za-z0-9 ()-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || 'sari-sari-report';
+
+  const chosen = await dialog.showSaveDialog(win, {
+    title: 'Save the report as a PDF',
+    defaultPath: path.join(app.getPath('documents'), `${suggested}.pdf`),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { canceled: true };
+  const target = /\.pdf$/i.test(chosen.filePath) ? chosen.filePath : `${chosen.filePath}.pdf`;
+
+  // The report is rendered in its own hidden window: printing the live window
+  // would capture the whole till instead of the sheet of paper.
+  const temp = path.join(app.getPath('temp'), `sari-report-${Date.now()}.html`);
+  fs.writeFileSync(temp, html, 'utf8');
+  const sheet = new BrowserWindow({
+    show: false,
+    width: 900,
+    height: 1200,
+    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  try {
+    await sheet.loadFile(temp);
+    const pdf = await sheet.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
+    });
+    fs.writeFileSync(target, pdf);
+  } finally {
+    if (!sheet.isDestroyed()) sheet.destroy();
+    try {
+      fs.unlinkSync(temp);
+    } catch (err) {
+      /* a leftover temp file is harmless */
+    }
+  }
+  return { file: target, size: fs.statSync(target).size };
+});
+
 ipcMain.handle('images:choose', async () => {
   const result = await dialog.showOpenDialog(win, {
     title: 'Choose a picture for this product',
