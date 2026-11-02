@@ -21,6 +21,12 @@
       </div>
       <div class="topbar-right">
         <div class="today-chip">Today: <b id="todayTotal">₱0.00</b></div>
+        <button
+          class="today-chip"
+          id="changeFundChip"
+          type="button"
+          title="Money for change today — click to set it"
+        >Change: <b id="changeFundAmount">₱0.00</b></button>
         <button class="icon-btn" id="muteBtn" title="Turn the beep sounds off" aria-label="Sounds">🔊</button>
         <button class="icon-btn" id="settingsBtn" title="Store settings" aria-label="Store settings">⚙️</button>
         <button class="icon-btn close-btn" id="closeBtn" title="Close the app" aria-label="Close the app">✕</button>
@@ -162,18 +168,29 @@
 
           <div class="pic-status" id="lookupStatus" hidden></div>
 
+          <label class="check-row">
+            <input id="pBundleOn" type="checkbox" />
+            <span>Sell this as a bundle (for example 3 for ₱5.00)</span>
+          </label>
+
           <div class="row2">
             <label class="field">
-              <span>Price (₱)</span>
+              <span id="pPriceLabel">Price (₱)</span>
               <input id="pPrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
-              <small>What the customer pays</small>
+              <small id="pPriceHint">What the customer pays</small>
             </label>
             <label class="field">
-              <span>Original price (₱)</span>
+              <span id="pOriginalLabel">Original price (₱)</span>
               <input id="pOriginal" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" />
-              <small>What you paid — your profit is worked out from this</small>
+              <small id="pOrigHint">What you paid — your profit is worked out from this</small>
             </label>
           </div>
+
+          <label class="field" id="bundleFields" hidden>
+            <span>How many in a bundle</span>
+            <input id="pBundleQty" type="number" min="2" step="1" inputmode="numeric" placeholder="3" />
+            <small>Example: 3 — the two prices above are then for the whole bundle</small>
+          </label>
 
           <div class="row2">
             <label class="field">
@@ -407,6 +424,39 @@
               <button type="button" class="btn btn-ghost" id="restoreBtn">♻️ Restore a backup</button>
             </div>
           </div>
+          <div class="modal-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-green">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ================================================ money for change -->
+    <div class="modal-backdrop" id="modal-fund" hidden>
+      <div class="modal">
+        <h2>Money for change</h2>
+        <p class="modal-note">
+          The cash you keep ready to give change today. It starts again at zero
+          tomorrow, so set it each morning.
+        </p>
+        <form id="fundForm">
+          <label class="field">
+            <span>Money for change (₱)</span>
+            <input
+              id="fundAmount"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="200.00"
+            />
+            <small>
+              For example 200 — a customer paying ₱100 for a ₱50 sale takes the
+              ₱50 change out of this.
+            </small>
+          </label>
           <div class="modal-actions">
             <span class="spacer"></span>
             <button type="button" class="btn btn-ghost" data-close>Cancel</button>

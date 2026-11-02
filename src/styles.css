@@ -1374,6 +1374,44 @@ main {
   gap: 12px;
 }
 
+/* A plain switch for the product form: unticked, the form has the usual two
+   prices; ticked, those two prices are for a whole bundle. */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0 14px;
+  padding: 12px 14px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--wash);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.check-row input[type='checkbox'] {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+}
+
+/* .field sets display:block, which would otherwise defeat the hidden attribute. */
+#bundleFields[hidden] {
+  display: none;
+}
+
+/* The change float in the top bar is a button wearing the Today chip's clothes. */
+button.today-chip {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 /* The price, the cost you paid and the price on the pack sit in one row. */
 .row3 {
   display: grid;

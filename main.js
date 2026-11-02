@@ -61,6 +61,8 @@ function openDb() {
       price REAL NOT NULL DEFAULT 0,
       cost REAL NOT NULL DEFAULT 0,
       original_price REAL NOT NULL DEFAULT 0,
+      bundle_qty INTEGER NOT NULL DEFAULT 0,
+      bundle_price REAL NOT NULL DEFAULT 0,
       stock INTEGER NOT NULL DEFAULT 0,
       low_stock INTEGER NOT NULL DEFAULT 5,
       image TEXT,
@@ -90,6 +92,11 @@ function openDb() {
       total REAL NOT NULL DEFAULT 0,
       count INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS change_fund (
+      day TEXT PRIMARY KEY,
+      amount REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
   `);
   // Databases created before the original price existed need the column added.
   const productColumns = db.all('PRAGMA table_info(products)');
@@ -103,6 +110,13 @@ function openDb() {
   // Databases created before the cost price existed need the column added.
   if (productColumns && !productColumns.some((c) => c.name === 'cost')) {
     db.exec('ALTER TABLE products ADD COLUMN cost REAL NOT NULL DEFAULT 0');
+  }
+  // Databases created before bundle offers ("3 for 5") need their columns too.
+  if (productColumns && !productColumns.some((c) => c.name === 'bundle_qty')) {
+    db.exec('ALTER TABLE products ADD COLUMN bundle_qty INTEGER NOT NULL DEFAULT 0');
+  }
+  if (productColumns && !productColumns.some((c) => c.name === 'bundle_price')) {
+    db.exec('ALTER TABLE products ADD COLUMN bundle_price REAL NOT NULL DEFAULT 0');
   }
   // Profit is the selling price minus the "Original price" (what the shop paid),
   // so anything typed into the short-lived Cost price field is moved across
@@ -214,12 +228,35 @@ function rowToProduct(row) {
     barcode: row.barcode,
     price: row.price,
     originalPrice: row.original_price || 0,
+    bundleQty: row.bundle_qty || 0,
+    bundlePrice: row.bundle_price || 0,
     stock: row.stock,
     lowStock: row.low_stock,
     image: row.image,
     hidden: !!row.hidden,
     updatedAt: row.updated_at,
   };
+}
+
+// A bundle offer is "how many in a set" plus "what the set costs" — 3 for 5.
+// The set price is the figure the shop types and the unit price stored beside
+// it is worked out from it, which is why there is no cheaper-than-singles test
+// here: the bundle is the price, not a discount applied on top of one.
+function cleanBundle(bundleQty, bundlePrice) {
+  const qty = Math.round(asNumber(bundleQty));
+  const setPrice = Math.round(asNumber(bundlePrice) * 10000) / 10000;
+  if (qty < 2 || setPrice <= 0) return null;
+  return { qty, price: setPrice };
+}
+
+// Whole bundles at the bundle price, the odd piece at the single price.
+function lineTotal(line) {
+  const price = Math.max(0, asNumber(line && line.price));
+  const qty = Math.max(0, Math.round(asNumber(line && line.qty)));
+  const offer = cleanBundle(line && line.bundleQty, line && line.bundlePrice);
+  if (!offer) return price * qty;
+  const groups = Math.floor(qty / offer.qty);
+  return Math.round((groups * offer.price + (qty - groups * offer.qty) * price) * 100) / 100;
 }
 
 function rowToSale(row) {
@@ -761,12 +798,16 @@ ipcMain.handle('products:save', (_event, product) => {
   const name = String(product && product.name ? product.name : '').trim();
   if (!name) throw new Error('Please type the product name.');
   const settings = readSettings();
+  const unitPrice = Math.max(0, asNumber(product.price));
+  const offer = cleanBundle(product.bundleQty, product.bundlePrice);
   const record = {
     id: product.id || uid(),
     name,
     barcode: String(product.barcode || '').trim(),
-    price: Math.max(0, asNumber(product.price)),
+    price: unitPrice,
     originalPrice: Math.max(0, asNumber(product.originalPrice)),
+    bundleQty: offer ? offer.qty : 0,
+    bundlePrice: offer ? offer.price : 0,
     stock: Math.max(0, Math.round(asNumber(product.stock))),
     lowStock: Math.max(0, Math.round(asNumber(product.lowStock, settings.lowStock))),
     image: product.image ? String(product.image) : null,
@@ -780,13 +821,13 @@ ipcMain.handle('products:save', (_event, product) => {
   const hiddenFlag = record.hidden ? 1 : 0;
   if (found) {
     conn.run(
-      'UPDATE products SET name = ?, barcode = ?, price = ?, original_price = ?, stock = ?, low_stock = ?, image = ?, hidden = ?, updated_at = ? WHERE id = ?',
-      [record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt, record.id]
+      'UPDATE products SET name = ?, barcode = ?, price = ?, original_price = ?, bundle_qty = ?, bundle_price = ?, stock = ?, low_stock = ?, image = ?, hidden = ?, updated_at = ? WHERE id = ?',
+      [record.name, record.barcode, record.price, record.originalPrice, record.bundleQty, record.bundlePrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt, record.id]
     );
   } else {
     conn.run(
-      'INSERT INTO products (id, name, barcode, price, original_price, stock, low_stock, image, hidden, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [record.id, record.name, record.barcode, record.price, record.originalPrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt]
+      'INSERT INTO products (id, name, barcode, price, original_price, bundle_qty, bundle_price, stock, low_stock, image, hidden, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [record.id, record.name, record.barcode, record.price, record.originalPrice, record.bundleQty, record.bundlePrice, record.stock, record.lowStock, record.image, hiddenFlag, record.updatedAt]
     );
   }
   return record;
@@ -810,18 +851,24 @@ ipcMain.handle('sales:create', (_event, payload) => {
     const product = rowToProduct(conn.get('SELECT * FROM products WHERE id = ?', [String(item.id || '')]));
     if (!product) throw new Error('An item in the cart is no longer in the inventory.');
     const qty = Math.max(1, Math.round(asNumber(item.qty, 1)));
+    const price = Math.max(0, asNumber(product.price));
+    // The offer is frozen onto the line, so a receipt keeps reading the way the
+    // customer paid even after the shop changes the prices.
+    const offer = cleanBundle(product.bundleQty, product.bundlePrice);
     lines.push({
       id: product.id,
       name: product.name,
-      price: Math.max(0, asNumber(product.price)),
+      price,
       originalPrice: Math.max(0, asNumber(product.originalPrice)),
+      bundleQty: offer ? offer.qty : 0,
+      bundlePrice: offer ? offer.price : 0,
       qty,
       image: product.image || null,
     });
     conn.run('UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?', [qty, product.id]);
   }
 
-  const total = Math.round(lines.reduce((sum, line) => sum + line.price * line.qty, 0) * 100) / 100;
+  const total = Math.round(lines.reduce((sum, line) => sum + lineTotal(line), 0) * 100) / 100;
   const paid = Math.max(0, Math.round(asNumber(payload && payload.paid, total) * 100) / 100);
   const sale = {
     id: uid(),
@@ -1224,6 +1271,53 @@ ipcMain.handle('db:restore', async () => {
 
 // ---------------------------------------------------------------------------
 // Pictures IPC
+// ---------------------------------------------------------------------------
+// Money for change: the float the shop sets aside each morning so it can break
+// a big bill. It is kept per day rather than as one running figure, so a new
+// day starts back at zero without anyone having to clear it.
+// ---------------------------------------------------------------------------
+function dayKey(date) {
+  const d = date instanceof Date ? date : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function cleanDay(value) {
+  const day = String(value || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : dayKey(new Date());
+}
+
+function readChangeFund(day) {
+  const row = openDb().get('SELECT amount FROM change_fund WHERE day = ?', [cleanDay(day)]);
+  return row ? Math.max(0, asNumber(row.amount)) : 0;
+}
+
+ipcMain.handle('fund:get', (_event, day) => readChangeFund(day));
+
+ipcMain.handle('fund:set', (_event, payload) => {
+  const day = cleanDay(payload && payload.day);
+  // A float is cash in the drawer: never negative, never a fraction of a cent.
+  const amount = Math.max(0, Math.round(asNumber(payload && payload.amount) * 100) / 100);
+  const stamp = new Date().toISOString();
+  const conn = openDb();
+  const updated = conn.run('UPDATE change_fund SET amount = ?, updated_at = ? WHERE day = ?', [
+    amount,
+    stamp,
+    day,
+  ]);
+  if (!updated.changes) {
+    conn.run('INSERT INTO change_fund (day, amount, updated_at) VALUES (?,?,?)', [day, amount, stamp]);
+  }
+  return { day, amount };
+});
+
+ipcMain.handle('fund:between', (_event, from, to) =>
+  openDb().all('SELECT day, amount FROM change_fund WHERE day BETWEEN ? AND ? ORDER BY day', [
+    cleanDay(from),
+    cleanDay(to),
+  ])
+);
+
 // ---------------------------------------------------------------------------
 // Reports: the page itself is built in the renderer, and turned into a PDF here,
 // so the shop gets a real file to save, print or send without a print dialog.

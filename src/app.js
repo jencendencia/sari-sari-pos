@@ -42,6 +42,8 @@ const state = {
   showHidden: false,
   scanHit: null,
   reportHtml: '',
+  changeFund: 0,
+  fundDay: '',
 };
 
 /* ------------------------------------------------------------------ sound */
@@ -240,8 +242,43 @@ function focusScanner() {
 }
 
 /* -------------------------------------------------------------------- cart */
+// Same rules as the main process: a product can carry a bundle offer ("3 for
+// ₱5"), and a line is charged as whole bundles at that price plus whatever is
+// left over at the single price. The offer travels with the cart line and then
+// with the sale, so an old receipt still reads the way the customer paid.
+function bundleOffer(line) {
+  const qty = Math.round(Number(line && line.bundleQty) || 0);
+  const price = Number(line && line.bundlePrice) || 0;
+  if (qty < 2 || price <= 0) return null;
+  return { qty, price };
+}
+
+function bundleSplit(line) {
+  const offer = bundleOffer(line);
+  const qty = Math.max(0, Math.round(Number(line && line.qty) || 0));
+  if (!offer) return { offer: null, groups: 0, rest: qty };
+  const groups = Math.floor(qty / offer.qty);
+  return { offer, groups, rest: qty - groups * offer.qty };
+}
+
+function lineTotal(line) {
+  const { offer, groups, rest } = bundleSplit(line);
+  const unit = Number(line && line.price) || 0;
+  const total = offer ? groups * offer.price + rest * unit : rest * unit;
+  return Math.round(total * 100) / 100;
+}
+
+function cartUnitText(line) {
+  const { offer, groups, rest } = bundleSplit(line);
+  const unit = peso(Number(line.price) || 0);
+  if (!offer) return `${unit} each`;
+  const bundle = `${offer.qty} for ${peso(offer.price)}`;
+  if (!groups) return `${unit} each · ${bundle}`;
+  return rest ? `${bundle} + ${rest} × ${unit}` : bundle;
+}
+
 function cartTotal() {
-  return state.cart.reduce((sum, line) => sum + line.price * line.qty, 0);
+  return Math.round(state.cart.reduce((sum, line) => sum + lineTotal(line), 0) * 100) / 100;
 }
 
 function cartCount() {
@@ -268,7 +305,7 @@ function renderCart() {
         ${pic}
         <div>
           <div class="cart-name">${esc(line.name)}</div>
-          <div class="cart-unit">${peso(line.price)} each</div>
+          <div class="cart-unit">${cartUnitText(line)}</div>
         </div>
         <div class="qty">
           <button type="button" data-act="minus" aria-label="One less">−</button>
@@ -276,7 +313,7 @@ function renderCart() {
           <button type="button" data-act="plus" aria-label="One more">+</button>
         </div>
         <div class="cart-end">
-          <div class="cart-line-total">${peso(line.price * line.qty)}</div>
+          <div class="cart-line-total">${peso(lineTotal(line))}</div>
           <button type="button" class="row-remove" data-act="remove" aria-label="Remove ${esc(line.name)} from this sale">✕ Remove</button>
         </div>
       </div>`;
@@ -292,6 +329,8 @@ function addToCart(product, quiet) {
       id: product.id,
       name: product.name,
       price: Number(product.price) || 0,
+      bundleQty: Number(product.bundleQty) || 0,
+      bundlePrice: Number(product.bundlePrice) || 0,
       image: product.image || null,
       qty: 1,
     });
@@ -593,6 +632,8 @@ async function takeHold(id) {
     id: line.id,
     name: line.name,
     price: Number(line.price) || 0,
+    bundleQty: Number(line.bundleQty) || 0,
+    bundlePrice: Number(line.bundlePrice) || 0,
     image: line.image || null,
     qty: Math.max(1, Number(line.qty) || 1),
   }));
@@ -900,6 +941,11 @@ function renderInventory() {
               ? `<div class="inv-orig">Original ${peso(p.originalPrice)}</div>`
               : ''
           }
+          ${
+            Number(p.bundleQty) >= 2 && Number(p.bundlePrice) > 0
+              ? `<div class="inv-orig">${Number(p.bundleQty)} for ${peso(p.bundlePrice)}</div>`
+              : ''
+          }
         </div>
         <div class="stock-box">
           <button type="button" data-act="minus" aria-label="Less stock">−</button>
@@ -1073,8 +1119,18 @@ function openProductForm(product, scanBarcode) {
   lastProductName = $('#pName').value;
   $('#pBarcode').value = product && product.barcode ? product.barcode : scanBarcode || '';
   lookupStatus('');
-  $('#pPrice').value = product ? product.price : '';
-  $('#pOriginal').value = product && product.originalPrice ? product.originalPrice : '';
+  // With the bundle switch on, the two price boxes describe the whole set, so
+  // they are shown the way they were typed rather than as per-item figures.
+  const bundleOn = !!(product && product.bundleQty >= 2 && product.bundlePrice > 0);
+  $('#pPrice').value = !product ? '' : bundleOn ? product.bundlePrice : product.price;
+  $('#pOriginal').value = !product || !product.originalPrice
+    ? ''
+    : bundleOn
+      ? Math.round(product.originalPrice * product.bundleQty * 100) / 100
+      : product.originalPrice;
+  $('#pBundleOn').checked = bundleOn;
+  $('#pBundleQty').value = bundleOn ? product.bundleQty : '';
+  updateBundleForm();
   $('#pStock').value = product ? product.stock : '';
   $('#pLow').value = product && product.lowStock != null ? product.lowStock : state.settings.lowStock;
   $('#deleteProductBtn').hidden = !product;
@@ -1099,15 +1155,45 @@ $('#pName').addEventListener('blur', () => {
   if (fixed !== $('#pName').value) $('#pName').value = fixed;
 });
 
+// The form only ever shows two prices. Turning the bundle switch on relabels
+// them as prices for the whole set and reveals how many go in one.
+function updateBundleForm() {
+  const on = $('#pBundleOn').checked;
+  $('#bundleFields').hidden = !on;
+  $('#pPriceLabel').textContent = on ? 'Bundle price (₱)' : 'Price (₱)';
+  $('#pOriginalLabel').textContent = on ? 'Original bundle price (₱)' : 'Original price (₱)';
+  $('#pPriceHint').textContent = on
+    ? 'What the customer pays for the whole bundle'
+    : 'What the customer pays';
+  $('#pOrigHint').textContent = on
+    ? 'What you paid for the whole bundle — your profit comes from this'
+    : 'What you paid — your profit is worked out from this';
+}
+
+$('#pBundleOn').addEventListener('change', updateBundleForm);
+
 $('#productForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('#pName').value = properCaseName($('#pName').value); // Enter can skip blur
+  const bundleOn = $('#pBundleOn').checked;
+  const bundleQty = bundleOn ? Math.round(Number($('#pBundleQty').value) || 0) : 0;
+  if (bundleOn && bundleQty < 2) {
+    toast('A bundle needs at least 2 items — for example 3 for ₱5.', { error: true, duration: 6000 });
+    $('#pBundleQty').focus();
+    return;
+  }
+  // Both typed prices are for the whole bundle, so they are divided down to the
+  // per-item figures the cart, the receipt and the profit all work with.
+  const perItem = (amount) =>
+    bundleOn ? Math.round((Number(amount) || 0) / bundleQty * 10000) / 10000 : amount;
   const payload = {
     id: state.editingId,
     name: $('#pName').value,
     barcode: $('#pBarcode').value,
-    price: $('#pPrice').value,
-    originalPrice: $('#pOriginal').value,
+    price: perItem($('#pPrice').value),
+    originalPrice: perItem($('#pOriginal').value),
+    bundleQty: bundleOn ? bundleQty : 0,
+    bundlePrice: bundleOn ? Number($('#pPrice').value) || 0 : 0,
     stock: $('#pStock').value || 0,
     lowStock: $('#pLow').value,
     image: state.editingImage,
@@ -1473,11 +1559,21 @@ $('#finishBtn').addEventListener('click', finishSale);
 function receiptHtml(sale) {
   const when = new Date(sale.at);
   const lines = sale.items
-    .map(
-      (line) => `
-      <div class="receipt-line"><span>${esc(line.name)}</span><span>${peso(line.price * line.qty)}</span></div>
-      <div class="receipt-line qty"><span>&nbsp;&nbsp;${line.qty} × ${peso(line.price)}</span><span></span></div>`
-    )
+    .map((line) => {
+      const { offer, groups, rest } = bundleSplit(line);
+      const unit = peso(line.price);
+      const detail = offer
+        ? [
+            groups ? `${groups} × ${offer.qty} for ${peso(offer.price)}` : '',
+            rest ? `${rest} × ${unit}` : '',
+          ]
+            .filter(Boolean)
+            .join(' + ')
+        : `${line.qty} × ${unit}`;
+      return `
+      <div class="receipt-line"><span>${esc(line.name)}</span><span>${peso(lineTotal(line))}</span></div>
+      <div class="receipt-line qty"><span>&nbsp;&nbsp;${detail}</span><span></span></div>`;
+    })
     .join('');
 
   return `
@@ -1920,7 +2016,7 @@ function aggregateReport(sales, products, from, to) {
         known: false,
       };
       entry.qty += qty;
-      entry.revenue += (Number(line.price) || 0) * qty;
+      entry.revenue += lineTotal(line);
       const paid = lineCost(line);
       if (paid > 0) {
         entry.cost += paid * qty;
@@ -2124,7 +2220,7 @@ function reportHtml({ from, to, data, storeName }) {
   .till-label { font-size: 8.5pt; color: #6b4a00; }
   .till-money { font-size: 22pt; font-weight: 700; line-height: 1.05; color: #241a00; font-variant-numeric: tabular-nums; }
   .till-average { font-size: 8.5pt; color: #6b4a00; }
-  .till-facts { display: flex; gap: 24px; margin: 0; }
+  .till-facts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 24px; margin: 0; }
   .till-facts div { text-align: right; }
   .till-facts dt { font-size: 8.5pt; color: #6b4a00; }
   .till-facts dd { margin: 0; font-size: 13pt; font-weight: 700; line-height: 1.2; color: #241a00; font-variant-numeric: tabular-nums; }
@@ -2176,6 +2272,7 @@ function reportHtml({ from, to, data, storeName }) {
     <dl class="till-facts">
       <div><dt>Sales</dt><dd>${data.totals.count}</dd></div>
       <div><dt>Items sold</dt><dd>${data.totals.items}</dd></div>
+      <div><dt>Money for change</dt><dd>${peso(data.moneyForChange || 0)}</dd></div>
       <div><dt>Profit</dt><dd>${data.hasCost ? peso(data.totals.profit) : dash}<span class="fact-note">${esc(profitNote)}</span></dd></div>
     </dl>
   </section>
@@ -2218,6 +2315,61 @@ function reportHtml({ from, to, data, storeName }) {
 }
 
 /* ------------------------------------------------------- reports screen */
+/* ------------------------------------------------------- money for change */
+// The float kept in the drawer to break big bills. It belongs to one day only:
+// the figure is stored against today's date, so tomorrow starts at zero on its
+// own without anyone having to clear yesterday's amount.
+function renderChangeFund() {
+  $('#changeFundAmount').textContent = peso(state.changeFund);
+  $('#changeFundChip').title = state.changeFund
+    ? `Money for change today: ${peso(state.changeFund)} — click to change it`
+    : 'No money for change set today — click to set it';
+}
+
+async function loadChangeFund() {
+  const day = localIsoDate(new Date());
+  try {
+    state.changeFund = Number(await window.api.getChangeFund(day)) || 0;
+  } catch (err) {
+    state.changeFund = 0;
+  }
+  state.fundDay = day;
+  renderChangeFund();
+}
+
+function openChangeFund() {
+  $('#fundAmount').value = state.changeFund ? state.changeFund : '';
+  openModal('modal-fund');
+  setTimeout(() => {
+    $('#fundAmount').focus();
+    $('#fundAmount').select();
+  }, 30);
+}
+
+$('#changeFundChip').addEventListener('click', openChangeFund);
+
+$('#fundForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const amount = Math.max(0, Math.round((Number($('#fundAmount').value) || 0) * 100) / 100);
+  try {
+    const saved = await window.api.setChangeFund(localIsoDate(new Date()), amount);
+    state.changeFund = Number(saved && saved.amount) || 0;
+    state.fundDay = (saved && saved.day) || localIsoDate(new Date());
+    closeModal('modal-fund');
+    renderChangeFund();
+    toast(amount ? `Money for change today: ${peso(amount)}` : 'Money for change cleared.');
+    renderReports(); // the report prints this figure, so keep it current
+  } catch (err) {
+    toast(errText(err), { error: true, duration: 7000 });
+  }
+});
+
+// Midnight: a new day gets a fresh float, so the chip follows the calendar.
+setInterval(() => {
+  const today = localIsoDate(new Date());
+  if (state.fundDay && state.fundDay !== today) loadChangeFund();
+}, 60 * 1000);
+
 let reportToken = 0;
 
 function reportInputs() {
@@ -2257,7 +2409,12 @@ async function renderReports() {
   try {
     const sales = (await window.api.salesBetween(range.from.toISOString(), range.to.toISOString())) || [];
     if (mine !== reportToken) return; // a newer range was asked for while this ran
+    // The float is a per-day figure, so a range adds up the days it covers.
+    const funds =
+      (await window.api.changeFundBetween(localIsoDate(range.from), localIsoDate(range.to))) || [];
+    if (mine !== reportToken) return;
     const data = aggregateReport(sales, state.products, range.from, range.to);
+    data.moneyForChange = funds.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
     state.reportHtml = reportHtml({
       from: range.from,
       to: range.to,
@@ -2324,6 +2481,7 @@ async function init() {
 
   state.products = (await window.api.listProducts()) || [];
   state.sales = (await window.api.listSales(500)) || [];
+  await loadChangeFund();
   await refreshHolds();
   renderCart();
   updateToday();

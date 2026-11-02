@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
 
+  // Money for change (the float set aside for each day)
+  getChangeFund: (day) => ipcRenderer.invoke('fund:get', day),
+  setChangeFund: (day, amount) => ipcRenderer.invoke('fund:set', { day, amount }),
+  changeFundBetween: (from, to) => ipcRenderer.invoke('fund:between', from, to),
+
   // Backup
   backupDatabase: () => ipcRenderer.invoke('db:backup'),
   openBackupFolder: () => ipcRenderer.invoke('db:openFolder'),
