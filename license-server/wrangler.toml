@@ -1,0 +1,9 @@
+name = "sari-pos-license"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Paste the id printed by:
+#   npx wrangler kv namespace create LICENSE_KV
+kv_namespaces = [
+  { binding = "LICENSE_KV", id = "6b20f3b5c40440419d114dd27cc33e32" }
+]

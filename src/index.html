@@ -84,6 +84,24 @@
           </button>
           <button class="btn btn-green" id="addProductBtn">＋ Add product</button>
         </div>
+        <div class="hist-summary inv-summary">
+          <div class="stat">
+            <div class="stat-label">Items in list</div>
+            <div class="stat-value" id="invSumCount">0</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Original value</div>
+            <div class="stat-value" id="invSumOrig">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Selling value</div>
+            <div class="stat-value" id="invSumPrice">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Profit if all sold</div>
+            <div class="stat-value" id="invSumProfit">—</div>
+          </div>
+        </div>
         <div class="inv-found" id="invFound" hidden>
           <span id="invFoundText"></span>
           <button type="button" class="btn btn-ghost" id="invFoundClear">✕ Show all</button>
@@ -477,6 +495,34 @@
           <button type="button" class="btn btn-big-red" id="confirmYes">Yes</button>
         </div>
       </div>
+    </div>
+
+    <!-- ======================================================= activation -->
+    <div class="license-screen" id="licenseScreen" hidden>
+      <form class="license-card" id="licenseForm">
+        <div class="brand-mark license-mark">S</div>
+        <h2>Activate Sari-Sari POS</h2>
+        <p class="license-note">
+          Type the license key that came with this copy. It is asked for once on
+          this computer, then the store opens straight away.
+        </p>
+        <label class="field">
+          <span>License key</span>
+          <input
+            id="licenseKey"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="DTR-XXXX-XXXX-XXXX-XXXX"
+          />
+        </label>
+        <p class="license-error" id="licenseError" role="alert"></p>
+        <button type="submit" class="btn btn-green license-btn" id="licenseBtn">🔓 Activate</button>
+        <p class="license-foot">
+          This computer's ID: <b id="licenseMachineId">—</b><br />
+          Activation needs the internet once. After that, selling works offline.
+        </p>
+      </form>
     </div>
 
     <script src="app.js"></script>

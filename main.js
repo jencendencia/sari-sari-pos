@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const os = require('os');
 const yazl = require('yazl');
 const yauzl = require('yauzl');
 
@@ -645,6 +647,137 @@ ipcMain.handle('products:lookupBarcode', async (_event, rawCode) => {
   lookupCache.set(code, { at: Date.now(), result });
   if (lookupCache.size > 300) lookupCache.delete(lookupCache.keys().next().value);
   return result;
+});
+
+// ---------------------------------------------------------------------------
+// Activation.
+//
+// A copy of the app is tied to the license key it was sold with, and that key
+// is tied to this computer. The licence server (license-server/) is asked once,
+// and its answer is kept in license.json next to the database: after that the
+// shop sells without any internet at all.
+// ---------------------------------------------------------------------------
+const LICENSE_SERVER = (
+  process.env.POS_LICENSE_SERVER || 'https://sari-pos-license.jencendencia.workers.dev'
+).replace(/\/+$/, '');
+
+function licenseFile() {
+  return path.join(app.getPath('userData'), 'license.json');
+}
+
+// A stable fingerprint of this computer. The network adapters are sorted so
+// the same machine gives the same ID every time it starts.
+function getMachineId() {
+  const hash = crypto.createHash('sha256');
+  hash.update(os.hostname());
+  try {
+    hash.update(os.userInfo().username);
+  } catch (_) {
+    // a machine with no readable user still gets an ID from the rest
+  }
+  hash.update(process.platform);
+  hash.update(process.arch);
+
+  const macs = [];
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces).sort()) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.internal) continue;
+      if (!iface.mac || iface.mac === '00:00:00:00:00:00') continue;
+      macs.push(iface.mac);
+    }
+  }
+  hash.update(macs.join('|'));
+
+  return hash.digest('hex').slice(0, 16).toUpperCase();
+}
+
+function getStoredLicense() {
+  try {
+    if (fs.existsSync(licenseFile())) {
+      const data = JSON.parse(fs.readFileSync(licenseFile(), 'utf8'));
+      return data && typeof data === 'object' ? data : null;
+    }
+  } catch (_) {
+    // a damaged file is treated as no licence, which shows the key screen again
+  }
+  return null;
+}
+
+function saveLicense(data) {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(licenseFile(), JSON.stringify(data, null, 2));
+}
+
+// Keys are printed in groups, so DTREHS4HA7WGFGVPTQ6 is the same key as
+// DTR-EHS4-HA7W-GFGV-PTQ6: put the dashes back before anything is compared.
+function normalizeKey(raw) {
+  const letters = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (letters.startsWith('DTR') && letters.length === 19) {
+    const body = letters.slice(3);
+    return `DTR-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}`;
+  }
+  return String(raw || '').trim().toUpperCase();
+}
+
+const KEY_PATTERN = /^DTR(-[A-HJ-NP-Z2-9]{4}){4}$/;
+
+ipcMain.handle('license:status', () => {
+  const stored = getStoredLicense();
+  const machineId = getMachineId();
+  if (!stored || !stored.licenseKey || !stored.activatedAt) {
+    return { activated: false, machineId };
+  }
+  return {
+    activated: true,
+    licenseKey: stored.licenseKey,
+    activatedAt: stored.activatedAt,
+    machineId: stored.machineId || machineId,
+    thisMachine: machineId,
+  };
+});
+
+ipcMain.handle('license:machineId', () => getMachineId());
+
+ipcMain.handle('license:activate', async (_event, rawKey) => {
+  const key = normalizeKey(rawKey);
+  if (!key) return { valid: false, message: 'Please type your license key.' };
+  if (!KEY_PATTERN.test(key)) {
+    return { valid: false, message: 'A license key looks like DTR-XXXX-XXXX-XXXX-XXXX.' };
+  }
+
+  const machineId = getMachineId();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(`${LICENSE_SERVER}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, machineId }),
+      signal: controller.signal,
+    });
+    const result = await response.json().catch(() => ({}));
+
+    if (result && result.valid) {
+      saveLicense({ licenseKey: key, machineId, activatedAt: new Date().toISOString() });
+      return { valid: true, licenseKey: key };
+    }
+    return {
+      valid: false,
+      message: (result && result.message) || 'That license key could not be activated.',
+    };
+  } catch (err) {
+    // No internet, a wrong server address, or a server that never answered all
+    // end up here: the shopkeeper is told to try again rather than shown a code.
+    return {
+      valid: false,
+      message:
+        'Cannot reach the activation server. Check the internet connection and try again.',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 // ---------------------------------------------------------------------------

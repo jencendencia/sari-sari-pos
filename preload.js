@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('api', {
   restoreBackup: () => ipcRenderer.invoke('db:restore'),
   saveReportPdf: (html, name) => ipcRenderer.invoke('reports:pdf', { html, name }),
 
+  // Activation (this copy of the app, and the computer it runs on)
+  licenseStatus: () => ipcRenderer.invoke('license:status'),
+  activateLicense: (key) => ipcRenderer.invoke('license:activate', key),
+  machineId: () => ipcRenderer.invoke('license:machineId'),
+
   // Updates
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),

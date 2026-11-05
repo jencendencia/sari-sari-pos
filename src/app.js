@@ -194,6 +194,7 @@ const sellScreenKeys = {
 };
 
 document.addEventListener('keydown', (event) => {
+  if (state.locked) return; // the activation screen owns the keyboard
   if (!/^F([1-9]|1[0-2])$/.test(event.key)) return;
 
   const modal = topModal();
@@ -726,6 +727,7 @@ let scanBuffer = '';
 let lastKeyTime = 0;
 
 document.addEventListener('keydown', (event) => {
+  if (state.locked) return; // no scanning into an app that is not activated
   const active = document.activeElement;
   const typing =
     active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
@@ -904,6 +906,23 @@ function renderInventory() {
         )
     )
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // What the list adds up to. The stock a product holds decides its worth, so
+  // every total here is the item's price multiplied by how many are on the
+  // shelf — the same figure you would get by selling the lot. An item with no
+  // original price is left out of the cost and profit sums rather than counted
+  // as pure profit, which is the rule the day's takings already use.
+  const held = (p) => Math.max(0, Number(p.stock) || 0);
+  const priceOf = (p) => Number(p.price) || 0;
+  const costOf = (p) => Number(p.originalPrice) || 0;
+  const costed = items.filter((p) => costOf(p) > 0);
+  const worth = (rows, f) => rows.reduce((sum, p) => sum + f(p) * held(p), 0);
+  $('#invSumCount').textContent = String(items.length);
+  $('#invSumOrig').textContent = peso(worth(costed, costOf));
+  $('#invSumPrice').textContent = peso(worth(items, priceOf));
+  $('#invSumProfit').textContent = costed.length
+    ? peso(worth(costed, (p) => priceOf(p) - costOf(p)))
+    : '—';
 
   const list = $('#invList');
   if (!items.length) {
@@ -2473,6 +2492,63 @@ $('#closeBtn').addEventListener('click', () => window.api.closeWindow());
 $('#confirmYes').addEventListener('click', () => settleConfirm(true));
 $('#confirmNo').addEventListener('click', () => settleConfirm(false));
 
+/* ------------------------------------------------------------- activation */
+// The key screen is the only thing on offer until this copy is activated, so
+// the keyboard shortcuts behind it are switched off while it is up.
+function showActivation(status) {
+  state.locked = true;
+  $('#licenseMachineId').textContent = (status && status.machineId) || '—';
+  $('#licenseScreen').hidden = false;
+  $('#licenseKey').value = '';
+  $('#licenseError').textContent = '';
+  setTimeout(() => $('#licenseKey').focus(), 60);
+}
+
+// Keys are printed in capitals, so what is typed is shown in capitals too.
+// main.js puts the dashes back whether or not they were typed.
+$('#licenseKey').addEventListener('input', (event) => {
+  const field = event.target;
+  const caret = field.selectionStart;
+  field.value = field.value.toUpperCase();
+  field.setSelectionRange(caret, caret);
+});
+
+$('#licenseForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const key = $('#licenseKey').value.trim();
+  const error = $('#licenseError');
+  const button = $('#licenseBtn');
+
+  if (!key) {
+    error.textContent = 'Please type the license key that came with this copy.';
+    $('#licenseKey').focus();
+    return;
+  }
+
+  error.textContent = '';
+  button.disabled = true;
+  button.textContent = 'Checking…';
+
+  try {
+    const result = await window.api.activateLicense(key);
+    if (result && result.valid) {
+      state.locked = false;
+      $('#licenseScreen').hidden = true;
+      beep('done');
+      await init();
+      toast('Thank you — this copy is activated.', { duration: 6000 });
+      return;
+    }
+    beep('bad');
+    error.textContent = (result && result.message) || 'That license key could not be activated.';
+  } catch (err) {
+    error.textContent = errText(err);
+  } finally {
+    button.disabled = false;
+    button.textContent = '🔓 Activate';
+  }
+});
+
 /* ---------------------------------------------------------------- startup */
 async function init() {
   state.settings = await window.api.getSettings();
@@ -2510,6 +2586,17 @@ async function init() {
   }
 }
 
-init().catch((err) => {
+async function start() {
+  const status = await window.api.licenseStatus().catch(() => ({ activated: false }));
+  if (status && status.activated) {
+    state.locked = false;
+    $('#licenseScreen').hidden = true;
+    await init();
+    return;
+  }
+  showActivation(status);
+}
+
+start().catch((err) => {
   toast(err.message || 'The app could not start.', { error: true, duration: 20000 });
 });
