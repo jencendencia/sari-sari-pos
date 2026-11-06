@@ -316,6 +316,11 @@ function readSettings() {
   return {
     storeName: getSetting('storeName', 'My Sari-Sari Store'),
     lowStock: Math.max(0, Math.round(asNumber(getSetting('lowStock', '5'), 5))),
+    // The app copies itself once a day unless that is switched off, keeping only
+    // the newest few so the Backups folder cannot grow without end.
+    autoBackup: getSetting('autoBackup', '1') !== '0',
+    backupKeep: Math.min(30, Math.max(1, Math.round(asNumber(getSetting('backupKeep', '7'), 7)))),
+    backupLast: getSetting('backupLast', ''),
   };
 }
 
@@ -839,6 +844,11 @@ app.whenReady().then(() => {
   openDb();
   createWindow();
 
+  // The daily copy waits a few seconds so it never competes with the first
+  // screen, then the check repeats hourly for a shop still open at midnight.
+  setTimeout(() => autoBackupTick(), 5000);
+  setInterval(() => autoBackupTick(), 60 * 60 * 1000);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -1139,7 +1149,7 @@ ipcMain.handle('holds:delete', (_event, id) => {
 // ---------------------------------------------------------------------------
 ipcMain.handle('settings:get', () => readSettings());
 
-ipcMain.handle('settings:save', (_event, settings) => {
+ipcMain.handle('settings:save', async (_event, settings) => {
   openDb();
   if (settings && typeof settings.storeName === 'string' && settings.storeName.trim()) {
     putSetting('storeName', settings.storeName.trim().slice(0, 80));
@@ -1147,6 +1157,21 @@ ipcMain.handle('settings:save', (_event, settings) => {
   if (settings && settings.lowStock != null) {
     putSetting('lowStock', String(Math.max(0, Math.round(asNumber(settings.lowStock, 5)))));
   }
+  if (settings && typeof settings.autoBackup === 'boolean') {
+    putSetting('autoBackup', settings.autoBackup ? '1' : '0');
+  }
+  if (settings && settings.backupKeep != null) {
+    putSetting(
+      'backupKeep',
+      String(Math.min(30, Math.max(1, Math.round(asNumber(settings.backupKeep, 7)))))
+    );
+  }
+  // A lower "keep" takes effect at once, and switching the daily copy on should
+  // not leave the shop waiting an hour for the first one. Nothing is deleted
+  // while the feature is off.
+  const saved = readSettings();
+  if (saved.autoBackup) pruneAutoBackups(saved.backupKeep);
+  if (settings && settings.autoBackup === true) await autoBackupTick();
   return readSettings();
 });
 
@@ -1161,21 +1186,53 @@ function backupDir() {
   return dir;
 }
 
-function backupNames() {
+function backupNames(tag = 'backup') {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   const dir = backupDir();
+  // Automatic copies carry their own names so they can be pruned; the copies
+  // made by hand keep theirs and are never deleted by the app.
+  const dbName = tag === 'auto' ? 'sari-pos-auto' : 'sari-pos-backup';
+  const zipName = tag === 'auto' ? 'sari-pictures-auto' : 'sari-pictures';
   let n = 0;
   const suffix = () => (n ? ` (${n})` : '');
-  let db = path.join(dir, `sari-pos-backup ${stamp}${suffix()}.db`);
-  let zip = path.join(dir, `sari-pictures ${stamp}${suffix()}.zip`);
-  while (fs.existsSync(db) || fs.existsSync(zip)) {
+  let dbFile = path.join(dir, `${dbName} ${stamp}${suffix()}.db`);
+  let zipFile = path.join(dir, `${zipName} ${stamp}${suffix()}.zip`);
+  while (fs.existsSync(dbFile) || fs.existsSync(zipFile)) {
     n += 1;
-    db = path.join(dir, `sari-pos-backup ${stamp}${suffix()}.db`);
-    zip = path.join(dir, `sari-pictures ${stamp}${suffix()}.zip`);
+    dbFile = path.join(dir, `${dbName} ${stamp}${suffix()}.db`);
+    zipFile = path.join(dir, `${zipName} ${stamp}${suffix()}.zip`);
   }
-  return { db, zip };
+  return { db: dbFile, zip: zipFile };
+}
+
+// The newest `keep` automatic copies stay; anything older is deleted, along with
+// its pictures zip. Files the shopkeeper made by hand are left alone.
+function pruneAutoBackups(keep) {
+  const dir = backupDir();
+  const names = fs.readdirSync(dir);
+  const copies = names.filter((name) => /^sari-pos-auto .+\.db$/.test(name)).sort().reverse();
+  const zips = new Set(names.filter((name) => /^sari-pictures-auto .+\.zip$/.test(name)));
+  const pruned = [];
+  for (const name of copies.slice(Math.max(1, Math.round(Number(keep) || 7)))) {
+    const stamp = name.replace(/^sari-pos-auto /, '').replace(/\.db$/, '');
+    const zip = `sari-pictures-auto ${stamp}.zip`;
+    for (const victim of zips.has(zip) ? [name, zip] : [name]) {
+      try {
+        fs.unlinkSync(path.join(dir, victim));
+        pruned.push(victim);
+      } catch (err) {
+        /* already gone is the same as deleted */
+      }
+    }
+  }
+  return pruned;
+}
+
+function localDay(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 // Only the pictures an item actually points at. The folder also holds
@@ -1209,8 +1266,8 @@ function zipPictures(entries, target) {
   });
 }
 
-ipcMain.handle('db:backup', async () => {
-  const names = backupNames();
+async function writeBackup(tag = 'backup') {
+  const names = backupNames(tag);
   openDb().run('VACUUM INTO ?', [names.db]);
   const size = fs.statSync(names.db).size;
   if (!size) throw new Error('The backup file came out empty.');
@@ -1233,7 +1290,30 @@ ipcMain.handle('db:backup', async () => {
     picturesSize,
     at: new Date().toISOString(),
   };
-});
+}
+
+ipcMain.handle('db:backup', () => writeBackup('backup'));
+
+// One copy a day, made quietly by the app itself. The day it last ran is kept in
+// the database, so closing and reopening the app a dozen times over one day
+// still makes a single copy.
+async function autoBackupTick() {
+  const settings = readSettings();
+  if (!settings.autoBackup) return null;
+  const today = localDay();
+  if (settings.backupLast === today) return null;
+  try {
+    const result = await writeBackup('auto');
+    putSetting('backupLast', today);
+    pruneAutoBackups(settings.backupKeep);
+    return result;
+  } catch (err) {
+    // The shop has enough to think about; a failed automatic copy stays in the
+    // log and is tried again on the next check rather than interrupting a sale.
+    console.error('[backup] the automatic copy could not be made:', (err && err.message) || err);
+    return null;
+  }
+}
 
 // Only ever opens the Backups folder — the renderer cannot ask for any path.
 ipcMain.handle('db:openFolder', () => shell.openPath(backupDir()));

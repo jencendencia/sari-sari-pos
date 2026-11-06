@@ -322,9 +322,17 @@ function renderCart() {
     .join('');
 }
 
+// An item sold as a bundle only goes in by the bundle. One scan of "3 for ₱5"
+// is the offer the customer asked for, never a single piece at a part price.
+function cartStep(productOrLine) {
+  const offer = bundleOffer(productOrLine);
+  return offer ? offer.qty : 1;
+}
+
 function addToCart(product, quiet) {
+  const step = cartStep(product);
   const existing = state.cart.find((line) => line.id === product.id);
-  if (existing) existing.qty += 1;
+  if (existing) existing.qty += step;
   else
     state.cart.push({
       id: product.id,
@@ -333,7 +341,7 @@ function addToCart(product, quiet) {
       bundleQty: Number(product.bundleQty) || 0,
       bundlePrice: Number(product.bundlePrice) || 0,
       image: product.image || null,
-      qty: 1,
+      qty: step,
     });
   renderCart();
   if (!quiet) {
@@ -353,10 +361,11 @@ $('#cartList').addEventListener('click', (event) => {
   if (!line) return;
 
   const act = button.dataset.act;
+  const step = cartStep(line);
   if (act === 'plus') {
-    line.qty += 1;
+    line.qty += step;
   } else if (act === 'minus') {
-    if (line.qty > 1) line.qty -= 1;
+    if (line.qty > step) line.qty -= step;
     else return removeCartLine(index);
   } else if (act === 'remove') {
     return removeCartLine(index);
@@ -876,6 +885,22 @@ function stockFlagText(product) {
   return 'In stock';
 }
 
+// The rows the Inventory screen is showing: a scan that landed here on its own,
+// otherwise everything matching the search box, with hidden items kept out of
+// the way unless the shopkeeper asked for them.
+function inventoryItems() {
+  const q = $('#invSearch').value.trim().toLowerCase();
+  const hit = state.scanHit && state.products.some((p) => p.id === state.scanHit);
+  const source = hit
+    ? state.products.filter((p) => p.id === state.scanHit)
+    : state.products.filter(
+        (p) =>
+          (q || state.showHidden || !p.hidden) &&
+          (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q))
+      );
+  return source.slice().sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function renderInventory() {
   const q = $('#invSearch').value.trim().toLowerCase();
   const hiddenCount = state.products.filter((p) => p.hidden).length;
@@ -897,15 +922,7 @@ function renderInventory() {
   $('#invFound').hidden = !state.scanHit;
   if (scanned) $('#invFoundText').textContent = `Scanned: ${scanned.name}`;
 
-  const items = (state.scanHit
-      ? state.products.filter((p) => p.id === state.scanHit)
-      : state.products.filter(
-          (p) =>
-            (q || state.showHidden || !p.hidden) &&
-            (!q || p.name.toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q))
-        )
-    )
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const items = inventoryItems();
 
   // What the list adds up to. The stock a product holds decides its worth, so
   // every total here is the item's price multiplied by how many are on the
@@ -989,6 +1006,125 @@ function renderInventory() {
 }
 
 $('#invSearch').addEventListener('input', renderInventory);
+
+// The price list: the rows on the Inventory screen, printed as one sheet the
+// shop can pin up by the till. Only the name, what the item was bought for and
+// what it sells for, so the sheet stays readable at a glance.
+function priceListHtml(items, storeName, note) {
+  const generated = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+  const dash = '<span class="dash">—</span>';
+  const rows = items
+    .map(
+      (p, index) => `
+      <tr>
+        <td class="rank">${index + 1}</td>
+        <td>${esc(p.name)}</td>
+        <td class="num">${Number(p.originalPrice) > 0 ? peso(p.originalPrice) : dash}</td>
+        <td class="num">${peso(p.price)}</td>
+      </tr>`
+    )
+    .join('');
+  const missing = items.length - items.filter((p) => Number(p.originalPrice) > 0).length;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>${esc(storeName)} price list</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px 22px;
+    font-family: "Segoe UI", system-ui, Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.45;
+    color: #14211f;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 400; }
+  .masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+  .shop-name { font-size: 22pt; line-height: 1.05; letter-spacing: -0.015em; }
+  .shop-line { margin: 4px 0 0; font-size: 10.5pt; color: #4a5c58; }
+  .made { margin: 0; font-size: 8.5pt; line-height: 1.5; color: #6b7b78; text-align: right; white-space: nowrap; }
+
+  table { width: 100%; margin-top: 16px; border-collapse: collapse; }
+  thead th {
+    padding: 4px 6px;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #4a5c58;
+    text-align: left;
+    border-bottom: 1.2px solid #0c2b29;
+  }
+  tbody td { padding: 5px 6px; border-bottom: 1px solid #e6eceb; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; width: 26%; }
+  th.rank, td.rank { width: 24px; text-align: right; color: #93a29f; font-variant-numeric: tabular-nums; }
+  tr { break-inside: avoid; }
+  thead { display: table-header-group; }
+  .dash { color: #a9b6b3; }
+
+  .foot { margin: 18px 0 0; padding-top: 8px; border-top: 1px solid #c3d1ce; font-size: 8pt; color: #6b7b78; }
+</style>
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <h1 class="shop-name">${esc(storeName)}</h1>
+      <p class="shop-line">Price list${note ? ' — ' + esc(note) : ''}</p>
+    </div>
+    <p class="made">Made ${esc(generated)}<br />${items.length} ${items.length === 1 ? 'item' : 'items'}</p>
+  </header>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="rank">#</th>
+        <th>Item</th>
+        <th class="num">Original price</th>
+        <th class="num">Price</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <p class="foot">All prices in Philippine pesos.${
+    missing ? ` ${missing} of these items ${missing === 1 ? 'has' : 'have'} no original price on file.` : ''
+  }</p>
+</body>
+</html>`;
+}
+
+// The PDF is made in the main process from this same document, so the file
+// always matches the list on screen.
+$('#invPdfBtn').addEventListener('click', async () => {
+  const items = inventoryItems();
+  if (!items.length) {
+    toast('There are no items to put in the price list.');
+    return;
+  }
+  const search = $('#invSearch').value.trim();
+  const note = search ? `matching “${search}”` : state.scanHit ? 'the scanned item' : '';
+  const button = $('#invPdfBtn');
+  button.disabled = true;
+  try {
+    const html = priceListHtml(items, state.settings.storeName, note);
+    const result = await window.api.saveReportPdf(
+      html,
+      `${state.settings.storeName} price list ${localIsoDate(new Date())}`
+    );
+    if (result && result.canceled) return;
+    beep('done');
+    toast(`PDF saved: ${result.file}`, { duration: 10000 });
+  } catch (err) {
+    beep('bad');
+    toast(errText(err), { error: true, duration: 7000 });
+  } finally {
+    button.disabled = false;
+  }
+});
 
 // The "Scanned: …" bar is the way back to the full list after a scan.
 $('#invFoundClear').addEventListener('click', () => {
@@ -1131,6 +1267,17 @@ function properCaseName(text) {
 }
 
 function openProductForm(product, scanBarcode) {
+  // A new product starts on the barcode box, because that is the usual first
+  // move: scan it, and the lookup fills in the name, the price and the picture.
+  if (!product) {
+    resetProductForm();
+    $('#pBarcode').value = scanBarcode || '';
+    openModal('modal-product');
+    setTimeout(() => $('#pBarcode').focus(), 30);
+    if (scanBarcode) setTimeout(autoLookupBarcode, 60);
+    return;
+  }
+
   state.editingId = product ? product.id : null;
   state.editingImage = product && product.image ? product.image : null;
   $('#productTitle').textContent = product ? `Edit: ${product.name}` : 'Add a product';
@@ -1161,10 +1308,34 @@ function openProductForm(product, scanBarcode) {
   setPreview(state.editingImage);
   openModal('modal-product');
   setTimeout(() => $('#pName').focus(), 30);
+}
 
-  // A barcode that was just scanned is looked up online straight away, so the
-  // shopkeeper only has to check the price.
-  if (!product && scanBarcode) setTimeout(() => lookupOnline(scanBarcode), 60);
+// A blank form, ready for the next item. Everything that belonged to the
+// product just saved — including its picture — is dropped, and the caret is
+// put back on the barcode by whoever calls this.
+function resetProductForm() {
+  state.editingId = null;
+  state.editingImage = null;
+  lastProductName = '';
+  lastLookupCode = '';
+  $('#productTitle').textContent = 'Add a product';
+  $('#pName').value = '';
+  $('#pBarcode').value = '';
+  lookupStatus('');
+  $('#pPrice').value = '';
+  $('#pOriginal').value = '';
+  $('#pBundleOn').checked = false;
+  $('#pBundleQty').value = '';
+  updateBundleForm();
+  $('#pStock').value = '';
+  $('#pLow').value = state.settings.lowStock == null ? '' : state.settings.lowStock;
+  $('#deleteProductBtn').hidden = true;
+  $('#picUrl').value = '';
+  $('#picQuery').value = '';
+  $('#picResults').hidden = true;
+  $('#picResults').innerHTML = '';
+  $('#picStatus').hidden = true;
+  setPreview(null);
 }
 
 // Show the proper case the moment the name field is left, so what is stored
@@ -1222,11 +1393,19 @@ $('#productForm').addEventListener('submit', async (event) => {
     const index = state.products.findIndex((p) => p.id === saved.id);
     if (index >= 0) state.products[index] = saved;
     else state.products.push(saved);
-    closeModal('modal-product');
+    const wasNew = !state.editingId;
     renderInventory();
     renderCart();
     toast(`Saved: ${saved.name}`, { action: 'Add one to the cart', onAction: () => addToCart(saved) });
-    focusScanner();
+    if (wasNew) {
+      // Stock usually arrives in a run of items, so the form stays open and is
+      // left blank with the barcode box ready for the next scan.
+      resetProductForm();
+      $('#pBarcode').focus();
+    } else {
+      closeModal('modal-product');
+      focusScanner();
+    }
   } catch (err) {
     toast(err.message || 'Could not save the product.', { error: true, duration: 7000 });
   }
@@ -1249,6 +1428,8 @@ $('#deleteProductBtn').addEventListener('click', async () => {
 // Typing the name fills the internet search box, unless the shopkeeper has
 // already written their own search words.
 let lastProductName = '';
+// The barcode already looked up, so a scan is never sent to the internet twice.
+let lastLookupCode = '';
 
 function lookupStatus(message, kind) {
   const el = $('#lookupStatus');
@@ -1357,6 +1538,121 @@ async function lookupOnline(rawCode) {
 }
 
 $('#lookupBtn').addEventListener('click', () => lookupOnline($('#pBarcode').value));
+
+// A barcode already on file must not become a second copy of the same product,
+// so the saved item is offered instead. Opening it puts the form into edit mode
+// with that item's details filled in.
+async function offerExistingProduct(product, code) {
+  const open = await confirmBox(
+    'That item is already saved',
+    `${product.name} already uses barcode ${code}. Do you want to open it and update the details instead?`,
+    'Yes, open it'
+  );
+  if (open) {
+    lastLookupCode = code; // the item is known, so the internet is not asked again
+    beep('ok');
+    openProductForm(product);
+    return true;
+  }
+  $('#pBarcode').value = '';
+  lastLookupCode = '';
+  $('#pBarcode').focus();
+  return true;
+}
+
+// A scanner ends the code with Enter. Inside this form that would submit it, so
+// the Enter starts the online lookup instead and the caret moves on to the name
+// so the shopkeeper can check what came back.
+async function autoLookupBarcode() {
+  const code = String($('#pBarcode').value || '').trim();
+  if (!code || code === lastLookupCode) return false;
+  // While a new item is being added, a code already on file belongs to a saved
+  // product — offer that product rather than adding a duplicate.
+  const existing = state.editingId ? null : findLocalProduct(code);
+  if (existing) return offerExistingProduct(existing, code);
+  if (!/^\d{6,14}$/.test(code.replace(/[\s-]/g, ''))) return false;
+  lastLookupCode = code;
+  lookupOnline(code);
+  return true;
+}
+
+// A code that arrived by scan goes into the barcode box and is looked up, and
+// the caret moves on to the name so the shopkeeper can check what came back.
+async function useScannedBarcode(code) {
+  const clean = String(code || '').trim();
+  $('#pBarcode').value = clean;
+  const handled = await autoLookupBarcode();
+  // A prompt may have emptied the box and taken the caret itself.
+  if (handled && $('#pBarcode').value.trim() === clean) $('#pName').focus();
+}
+
+$('#pBarcode').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  useScannedBarcode($('#pBarcode').value);
+});
+
+// A scan can arrive while the caret sits on the name, a price or the stock box.
+// A scanner types far faster than a person, so a run of digits with almost no
+// gap between the keys is taken out of whatever field had the caret, put into
+// the barcode box and looked up — the other field is left as it was.
+let scanBurst = '';
+let scanBurstAt = 0;
+let scanBurstField = null;
+let scanBurstWas = '';
+
+document.addEventListener(
+  'keydown',
+  (event) => {
+    if (state.locked || $('#modal-product').hidden) return;
+    const field = document.activeElement;
+    if (!field || field.id === 'pBarcode') return; // the barcode box owns its own scans
+    if (!field.closest || !field.closest('#modal-product')) return;
+
+    if (event.key === 'Enter') {
+      if (scanBurst.length >= 6) {
+        const code = scanBurst;
+        const typedInto = scanBurstField;
+        const was = scanBurstWas;
+        scanBurst = '';
+        event.preventDefault();
+        event.stopPropagation();
+        if (typedInto) typedInto.value = was; // undo the digits that leaked in
+        useScannedBarcode(code);
+        return;
+      }
+      scanBurst = '';
+      return;
+    }
+
+    // Barcodes are digits, and a held-down key is not a scan.
+    if (!/^\d$/.test(event.key) || event.repeat) {
+      scanBurst = '';
+      return;
+    }
+
+    const now = Date.now();
+    if (scanBurst && now - scanBurstAt <= 45) {
+      // The second fast digit proves a machine is typing: drop the first one
+      // out of the field it landed in and keep the rest of the code here.
+      if (scanBurst.length === 1 && scanBurstField) scanBurstField.value = scanBurstWas;
+      scanBurst += event.key;
+      scanBurstAt = now;
+      event.preventDefault();
+      return;
+    }
+
+    scanBurst = event.key;
+    scanBurstAt = now;
+    // Only a text box can hold leaked digits; a focused button cannot.
+    scanBurstField = field.tagName === 'INPUT' || field.tagName === 'TEXTAREA' ? field : null;
+    scanBurstWas = scanBurstField ? scanBurstField.value : '';
+  },
+  true
+);
+
+// Tabbing out of the box after a code was typed or pasted looks it up too.
+$('#pBarcode').addEventListener('change', () => autoLookupBarcode());
 
 $('#pName').addEventListener('input', () => {
   const box = $('#picQuery');
@@ -1763,9 +2059,33 @@ async function voidSale(sale) {
 }
 
 /* --------------------------------------------------------------- settings */
+// Says in plain words whether the app is copying itself, and when it last did.
+// It reads the boxes above it, so switching the box changes the sentence at once.
+function autoBackupNote() {
+  const el = $('#autoBackupNote');
+  if (!$('#sAutoBackup').checked) {
+    el.textContent = 'Automatic backups are off. Only the copies you make with “Back up now” are kept.';
+    return;
+  }
+  const keep = Math.min(30, Math.max(1, Math.round(Number($('#sBackupKeep').value) || 7)));
+  const day = state.settings.backupLast
+    ? new Date(`${state.settings.backupLast}T00:00:00`).toLocaleDateString('en-PH', { dateStyle: 'long' })
+    : '';
+  const when = day
+    ? `The last automatic copy was made on ${day}.`
+    : 'The first automatic copy is made when you save this, or the next time the app is opened.';
+  el.textContent = `${when} The newest ${keep} of them are kept — older automatic copies are deleted, but the ones you made yourself are never touched.`;
+}
+
+$('#sAutoBackup').addEventListener('change', autoBackupNote);
+$('#sBackupKeep').addEventListener('input', autoBackupNote);
+
 $('#settingsBtn').addEventListener('click', () => {
   $('#sStoreName').value = state.settings.storeName;
   $('#sLowStock').value = state.settings.lowStock;
+  $('#sAutoBackup').checked = !!state.settings.autoBackup;
+  $('#sBackupKeep').value = state.settings.backupKeep;
+  autoBackupNote();
   openModal('modal-settings');
   setTimeout(() => $('#sStoreName').focus(), 30);
 });
@@ -1775,6 +2095,8 @@ $('#settingsForm').addEventListener('submit', async (event) => {
   state.settings = await window.api.saveSettings({
     storeName: $('#sStoreName').value,
     lowStock: $('#sLowStock').value,
+    autoBackup: $('#sAutoBackup').checked,
+    backupKeep: $('#sBackupKeep').value,
   });
   $('#storeName').textContent = state.settings.storeName;
   closeModal('modal-settings');

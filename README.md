@@ -121,6 +121,13 @@ and the low-stock warning level.
   The database copy is made with SQLite's `VACUUM INTO`, so it is consistent
   even while the app is being used and the live file is never touched. Each
   press makes a new pair; nothing is overwritten.
+- **Backing up by itself** can be left on in the same panel: once a day, a few
+  seconds after the app opens, it writes an automatic copy and keeps only the
+  newest few — `sari-pos-auto <date>.db`, seven copies by default (1–30). Older
+  automatic copies are deleted for you; the copies made with **💾 Back up now**
+  are never touched. The panel says when the last automatic copy was made, and
+  the day is remembered in the database, so reopening the app does not make
+  another one.
 - The zip holds **only the pictures linked to an item**, not the leftovers of
   old searches sitting in the same folder, and each entry keeps its original
   file name — so unzipping the archive back into the `pictures` folder

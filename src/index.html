@@ -82,6 +82,7 @@
             <span id="invHiddenLabel">Hidden</span>
             <span class="pill pill-count" id="invHiddenCount">0</span>
           </button>
+          <button class="btn btn-blue" id="invPdfBtn" title="Save the item list as a PDF">📄 Price list PDF</button>
           <button class="btn btn-green" id="addProductBtn">＋ Add product</button>
         </div>
         <div class="hist-summary inv-summary">
@@ -435,6 +436,15 @@
               What is here today is copied into the Backups folder first, so the
               wrong file can always be undone.
             </p>
+            <label class="check-row">
+              <input id="sAutoBackup" type="checkbox" />
+              <span>Back up by itself once a day</span>
+            </label>
+            <label class="field">
+              <span>Automatic copies to keep (1–30)</span>
+              <input id="sBackupKeep" type="number" min="1" max="30" step="1" inputmode="numeric" />
+            </label>
+            <p class="settings-note" id="autoBackupNote"></p>
             <div class="pic-status" id="backupStatus" hidden></div>
             <div class="update-actions">
               <button type="button" class="btn btn-blue" id="backupBtn">💾 Back up now</button>
