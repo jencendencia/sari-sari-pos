@@ -181,10 +181,12 @@ document.addEventListener('keydown', (event) => {
 
 /* ------------------------------------------------------ keyboard shortcuts */
 // Everything a busy counter needs has its own key, so a sale can be rung up
-// without the mouse: F2 find an item, F3 check a price, F4 take payment,
-// F5 freeze the sale, F6 the frozen sales, F10 cancel it — and F1 finishes the
-// sale from inside the payment screen. Escape still backs out of what is open.
+// without the mouse: F1 finishes the whole sale at the exact total, F2 find an
+// item, F3 check a price, F4 take payment, F5 freeze the sale, F6 the frozen
+// sales, F10 cancel it — and F1 also finishes the sale from inside the payment
+// screen. Escape still backs out of what is open.
 const sellScreenKeys = {
+  F1: () => $('#completeSaleBtn').click(),
   F2: () => openPicker(),
   F3: () => openPriceCheck(),
   F4: () => $('#payBtn').click(),
@@ -228,7 +230,7 @@ document.addEventListener('keydown', (event) => {
   if (!action) return;
   event.preventDefault();
 
-  if (['F4', 'F5', 'F10'].includes(event.key) && !state.cart.length) {
+  if (['F1', 'F4', 'F5', 'F10'].includes(event.key) && !state.cart.length) {
     beep('bad');
     toast('The cart is empty.');
     return;
@@ -291,6 +293,7 @@ function renderCart() {
   const count = cartCount();
   $('#cartCount').textContent = count === 1 ? '1 item' : `${count} items`;
   $('#totalAmount').textContent = peso(cartTotal());
+  $('#completeSaleBtn').disabled = count === 0;
   $('#payBtn').disabled = count === 0;
   $('#freezeBtn').disabled = count === 0;
   $('#clearCartBtn').disabled = count === 0;
@@ -1833,19 +1836,21 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
 });
 
-// One basket is booked once: the button stays off while the save is in flight,
+// One basket is booked once: both buttons stay off while the save is in flight,
 // so a double tap (or F1 pressed twice) cannot ring the same sale twice.
 let finishingSale = false;
 
-async function finishSale() {
-  if (finishingSale || $('#finishBtn').disabled) return;
+async function bookSale(paid) {
+  const total = cartTotal();
+  if (finishingSale || !state.cart.length || !(total > 0) || !(paid >= total)) return;
   finishingSale = true;
   $('#finishBtn').disabled = true;
+  $('#completeSaleBtn').disabled = true;
 
   try {
     const sale = await window.api.createSale({
       items: state.cart.map((line) => ({ id: line.id, qty: line.qty })),
-      paid: cashValue(),
+      paid,
     });
     state.sales.unshift(sale);
     const byId = new Map(state.products.map((p) => [p.id, p]));
@@ -1864,11 +1869,25 @@ async function finishSale() {
     toast(err.message || 'The sale could not be saved.', { error: true, duration: 7000 });
   } finally {
     finishingSale = false;
+    renderCart();
     renderPayment();
   }
 }
 
+async function finishSale() {
+  if (finishingSale || $('#finishBtn').disabled) return;
+  await bookSale(cashValue());
+}
+
+// The counter's fast path: the customer hands over exactly what the items cost,
+// so there is no change to work out and nothing to ask — the sale is booked as
+// cash given = the total, and the receipt opens straight away.
+function completeSale() {
+  return bookSale(cartTotal());
+}
+
 $('#finishBtn').addEventListener('click', finishSale);
+$('#completeSaleBtn').addEventListener('click', completeSale);
 
 /* -------------------------------------------------------------- receipts */
 function receiptHtml(sale) {

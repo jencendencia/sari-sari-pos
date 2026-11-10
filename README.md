@@ -18,6 +18,11 @@ the stock list honest without typing much.
   at once, stock is untouched (nothing is sold until *Take payment*), and an
   **Undo** toast appears so a mis-tap is never a disaster. Tapping **−** on a
   quantity of 1 removes that line too.
+- **✅ Complete sale (F1)**, right above *Take payment*, is the quickest way
+  through the counter: the customer hands over the exact total, so it books the
+  sale there and then with that amount as the cash given — no change screen, no
+  question to answer — prints the receipt and empties the cart. It stays greyed
+  out until something is in the cart.
 - **Take payment** opens the cash screen: big keypad, one-tap shortcuts for
   ₱50/₱100/₱200/₱500/₱1,000 and *Exact*, then the **change due** in the
   largest type on the screen. Finishing the sale prints a receipt and reduces
