@@ -1046,6 +1046,36 @@ ipcMain.handle('sales:between', (_event, from, to) => {
   return rows.map(rowToSale);
 });
 
+// The Sales screen asks for what the shopkeeper is looking for: a whole day, an
+// item, or both, and gets back only those sales, newest first. Each sale keeps
+// its own copy of the item names inside `items`, so a search still finds an old
+// sale after the product has been renamed or deleted.
+ipcMain.handle('sales:search', (_event, payload) => {
+  const from = String((payload && payload.from) || '');
+  const to = String((payload && payload.to) || '');
+  const text = String((payload && payload.text) || '').trim().toLowerCase();
+  const max = Math.max(1, Math.min(2000, asNumber(payload && payload.limit, 500)));
+  const where = [];
+  const params = [];
+  if (from) {
+    where.push('at >= ?');
+    params.push(from);
+  }
+  if (to) {
+    where.push('at <= ?');
+    params.push(to);
+  }
+  if (text) {
+    where.push('instr(lower(items), ?) > 0');
+    params.push(text);
+  }
+  const sql = `SELECT * FROM sales${
+    where.length ? ` WHERE ${where.join(' AND ')}` : ''
+  } ORDER BY at DESC LIMIT ?`;
+  params.push(max);
+  return openDb().all(sql, params).map(rowToSale);
+});
+
 // Voiding a sale puts its items back on the shelf. The record stays in the books
 // — a sale that never happened is still something the shop wants to see — so it
 // is flagged rather than deleted, and it can only be voided once.

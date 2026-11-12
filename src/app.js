@@ -776,7 +776,7 @@ function showScreen(name) {
   $$('.screen').forEach((screen) => screen.classList.toggle('active', screen.id === `screen-${name}`));
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.screen === name));
   if (name === 'inventory') renderInventory();
-  if (name === 'history') renderHistory();
+  if (name === 'history') refreshHistory();
   if (name === 'reports') {
     if (!$('#repFrom').value || !$('#repTo').value) setReportPreset('month');
     else renderReports();
@@ -1992,24 +1992,82 @@ function saleProfit(sale) {
   return Math.round((sale.total - paid) * 100) / 100;
 }
 
-function renderHistory() {
-  updateToday();
-  const list = $('#histList');
-  if (!state.sales.length) {
-    list.innerHTML = `<div class="empty-state"><span class="big">🧾</span>No sales yet today.<br />Finished sales appear here.</div>`;
-    return;
-  }
-  list.innerHTML = state.sales
-    .slice(0, 300)
-    .map((sale) => {
-      const when = new Date(sale.at);
-      const label = isToday(sale.at)
-        ? when.toLocaleTimeString('en-PH', { timeStyle: 'short' })
-        : when.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
-      return `
+/* The Sales screen can be narrowed to one day, to one item, or to both. What it
+   is narrowed to is kept here beside the last answer, so re-drawing the list
+   after a void does not have to ask the database again. */
+const histFilter = { date: '', text: '', sales: null, seq: 0 };
+
+// The day a sale was rung up on, read on this computer's calendar rather than in
+// UTC: a sale at 7pm here must not land on tomorrow's page.
+function dayKey(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+}
+
+// A day typed into the box is a day on this computer, so the search covers local
+// midnight up to the last millisecond before the next one.
+function dayBounds(day) {
+  const [year, month, date] = day.split('-').map(Number);
+  const start = new Date(year, month - 1, date, 0, 0, 0, 0);
+  const end = new Date(year, month - 1, date + 1, 0, 0, 0, 0);
+  return { from: start.toISOString(), to: new Date(end.getTime() - 1).toISOString() };
+}
+
+function dayLabel(key) {
+  if (key === dayKey(new Date().toISOString())) return 'Today';
+  const back = new Date();
+  back.setDate(back.getDate() - 1);
+  if (key === dayKey(back.toISOString())) return 'Yesterday';
+  const [year, month, date] = key.split('-').map(Number);
+  return new Date(year, month - 1, date).toLocaleDateString('en-PH', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+// A day's own line: its name, how many sales it holds, and what came in. Voided
+// sales stay listed underneath but are left out of that money.
+function histDayHtml(key, sales) {
+  const onDay = sales.filter((sale) => dayKey(sale.at) === key);
+  const live = onDay.filter((sale) => !sale.voided);
+  const voided = onDay.length - live.length;
+  const money = live.reduce((sum, sale) => sum + sale.total, 0);
+  return `
+    <div class="hist-day">
+      <div class="hist-day-name">${esc(dayLabel(key))}</div>
+      <div class="hist-day-sum">${live.length} sale(s)${voided ? `, ${voided} voided` : ''}</div>
+      <div class="hist-day-total">${peso(money)}</div>
+    </div>`;
+}
+
+// The row names what was sold, so reading back down the day works like reading
+// the baskets themselves. While an item is being searched for, only the items
+// that matched are named — that is why the sale is in the list.
+function histItemsText(sale) {
+  const lines = (sale.items || []).filter((line) => line && line.name);
+  if (!lines.length) return `${sale.count || 0} item(s)`;
+  const hits = histFilter.text
+    ? lines.filter((line) => String(line.name).toLowerCase().includes(histFilter.text))
+    : lines;
+  const shown = hits.length ? hits : lines;
+  const named = shown.slice(0, 4).map((line) => {
+    const qty = Math.max(1, Math.round(Number(line.qty) || 1));
+    return `${esc(line.name)}${qty > 1 ? ` ×${qty}` : ''}`;
+  });
+  const more = shown.length - named.length;
+  return more > 0 ? `${named.join(', ')} +${more} more` : named.join(', ');
+}
+
+function histRowHtml(sale) {
+  const when = new Date(sale.at).toLocaleTimeString('en-PH', { timeStyle: 'short' });
+  return `
       <div class="hist-row${sale.voided ? ' is-voided' : ''}" data-id="${esc(sale.id)}">
-        <div class="hist-when">${label}</div>
-        <div class="hist-items">${sale.count || 0} item(s)${
+        <div class="hist-when">${when}</div>
+        <div class="hist-items">${histItemsText(sale)}${
           sale.voided ? '<span class="void-tag">Voided</span>' : ''
         }</div>
         <div class="hist-money">
@@ -2029,15 +2087,90 @@ function renderHistory() {
             : '<button type="button" class="btn btn-ghost" data-act="void">Void sale</button>'
         }
       </div>`;
-    })
-    .join('');
+}
+
+function renderHistory() {
+  updateToday();
+  const filtered = !!(histFilter.date || histFilter.text);
+  const sales = (filtered ? histFilter.sales || [] : state.sales).slice(0, 300);
+  $('#histClearBtn').hidden = !filtered;
+  $('#histNote').textContent = filtered
+    ? `${sales.length} sale(s) found${
+        histFilter.date
+          ? ` on ${new Date(`${histFilter.date}T00:00:00`).toLocaleDateString('en-PH', {
+              dateStyle: 'long',
+            })}`
+          : ''
+      }`
+    : '';
+  const list = $('#histList');
+  if (!sales.length) {
+    list.innerHTML = filtered
+      ? `<div class="empty-state"><span class="big">🔎</span>${
+          histFilter.text ? 'No sale has that item.' : 'No sales on that day.'
+        }<br />Clear the day or the item to see everything.</div>`
+      : `<div class="empty-state"><span class="big">🧾</span>No sales yet today.<br />Finished sales appear here.</div>`;
+    return;
+  }
+  const rows = [];
+  let current = '';
+  for (const sale of sales) {
+    const key = dayKey(sale.at);
+    if (key !== current) {
+      rows.push(histDayHtml(key, sales));
+      current = key;
+    }
+    rows.push(histRowHtml(sale));
+  }
+  list.innerHTML = rows.join('');
+}
+
+// Asks the database for the sales the two boxes describe. With both of them empty
+// there is nothing to ask: the newest sales already in memory will do.
+async function refreshHistory() {
+  const date = $('#histDate').value;
+  const text = $('#histSearch').value.trim();
+  histFilter.date = date;
+  histFilter.text = text.toLowerCase();
+  histFilter.seq += 1;
+  const seq = histFilter.seq;
+  if (!date && !text) {
+    histFilter.sales = null;
+    renderHistory();
+    return;
+  }
+  const bounds = date ? dayBounds(date) : { from: '', to: '' };
+  try {
+    const found = await window.api.searchSales({
+      from: bounds.from,
+      to: bounds.to,
+      text,
+      limit: 500,
+    });
+    if (seq !== histFilter.seq) return; // a newer search has answered already
+    histFilter.sales = found || [];
+  } catch (err) {
+    if (seq !== histFilter.seq) return;
+    histFilter.sales = [];
+    toast(err.message || 'Those sales could not be read.', { error: true, duration: 7000 });
+  }
+  renderHistory();
+}
+
+// The sale behind a row, whichever list the row came from: the newest sales in
+// memory, or the ones a day/item search fetched from the database.
+function findSale(id) {
+  return (
+    (histFilter.sales || []).find((sale) => sale.id === id) ||
+    state.sales.find((sale) => sale.id === id)
+  );
 }
 
 $('#histList').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-act]');
   if (!button) return;
   const row = button.closest('.hist-row');
-  const sale = state.sales.find((s) => s.id === row.dataset.id);
+  const sale = findSale(row.dataset.id);
   if (!sale) return;
   if (button.dataset.act === 'void') {
     voidSale(sale);
@@ -2045,6 +2178,23 @@ $('#histList').addEventListener('click', (event) => {
   }
   $('#viewPaper').innerHTML = receiptHtml(sale);
   openModal('modal-view');
+});
+
+$('#histDate').addEventListener('change', () => refreshHistory());
+
+// Typing is debounced, so a search runs once the shopkeeper pauses rather than
+// once per letter.
+let histTyping = 0;
+$('#histSearch').addEventListener('input', () => {
+  clearTimeout(histTyping);
+  histTyping = setTimeout(() => refreshHistory(), 250);
+});
+
+$('#histClearBtn').addEventListener('click', () => {
+  clearTimeout(histTyping);
+  $('#histDate').value = '';
+  $('#histSearch').value = '';
+  refreshHistory();
 });
 
 // Voiding puts the items back on the shelf and keeps the record, flagged: the
@@ -2059,6 +2209,10 @@ async function voidSale(sale) {
   try {
     const result = await window.api.voidSale(sale.id);
     sale.voided = true;
+    // A searched-for row is a separate copy, so the sale in memory has to be
+    // marked too or today's figures would keep counting it.
+    const known = state.sales.find((s) => s.id === sale.id);
+    if (known) known.voided = true;
     // Stock moved on the main side, so the inventory in memory is now stale.
     state.products = (await window.api.listProducts()) || [];
     renderInventory();

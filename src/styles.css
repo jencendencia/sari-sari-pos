@@ -1040,6 +1040,92 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+/* The screen stacks its summary and filter above the list, and the list takes
+   whatever height is left, so a long day scrolls inside it. */
+#screen-history.active {
+  display: flex;
+  flex-direction: column;
+}
+
+#screen-history.active .hist-list {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Two boxes over the list: one narrows it to a single day, the other to the item
+   the customer is asking about. Both stay empty in the everyday case. */
+.hist-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.hist-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  min-width: 170px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--paper);
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.hist-find input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  padding: 3px 1px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.hist-find input:focus-visible {
+  outline: 2px solid var(--chrome);
+  outline-offset: 2px;
+  border-radius: 5px;
+}
+
+/* One line per day: the day's name, how many sales it holds, and what came in.
+   Voided sales stay listed underneath but are left out of that money. */
+.hist-day {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 4px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hist-day:first-child {
+  padding-top: 2px;
+}
+
+.hist-day-name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.hist-day-sum {
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hist-day-total {
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .hist-list {
   height: calc(100% - 104px);
   overflow-y: auto;
@@ -1063,13 +1149,17 @@ main {
 .hist-when {
   font-size: 17px;
   font-weight: 700;
-  min-width: 190px;
+  min-width: 88px;
 }
 
 .hist-items {
   flex: 1;
+  min-width: 0;
   color: var(--ink-soft);
   font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hist-total {
