@@ -1004,6 +1004,167 @@ main {
   display: none;
 }
 
+/* ----------------------------------------------------------------- gcash */
+/* A screen of its own for money that crosses the counter without a sale: the
+   form sits on top, the records scroll underneath. */
+#screen-gcash.active {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gcash-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+}
+
+.gcash-types {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.gcash-chip {
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+
+.gcash-chip:first-child {
+  border-left: 0;
+}
+
+.gcash-chip:hover {
+  background: #e6eeec;
+}
+
+.gcash-chip.active {
+  background: var(--chrome);
+  color: #fff;
+}
+
+.gcash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.gcash-field input {
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--paper);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+#gcashAmount,
+#gcashPayment {
+  width: 130px;
+}
+
+#gcashRef {
+  width: 250px;
+}
+
+.gcash-field input:focus-visible {
+  outline: 2px solid var(--chrome);
+  outline-offset: 1px;
+}
+
+.gcash-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+/* Jade for money coming in, red for money going out — read down the left edge. */
+.gcash-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: 7px solid var(--go);
+  border-radius: var(--radius-ctl);
+  box-shadow: var(--shadow-soft);
+  padding: 10px 14px;
+}
+
+.gcash-row.is-out {
+  border-left-color: var(--danger);
+}
+
+.gcash-when {
+  font-size: 16px;
+  font-weight: 700;
+  min-width: 190px;
+}
+
+.gcash-kind {
+  min-width: 84px;
+  color: var(--go);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gcash-row.is-out .gcash-kind {
+  color: var(--danger);
+}
+
+.gcash-ref {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gcash-money {
+  text-align: right;
+}
+
+.gcash-amount {
+  font-size: 21px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The fee charged on top of the amount, kept small so it never reads as part of
+   the money that moved. */
+.gcash-fee {
+  color: var(--go);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --------------------------------------------------------------- history */
 .hist-summary {
   display: grid;
@@ -1038,6 +1199,24 @@ main {
   font-size: 30px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* A card that is also the button for its own figure — the GCash float is set
+   by clicking the number it shows. */
+.stat-btn {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stat-btn .stat-label,
+.stat-btn .stat-value {
+  display: block;
+}
+
+.stat-btn:hover {
+  border-color: var(--chrome);
 }
 
 /* The screen stacks its summary and filter above the list, and the list takes

@@ -18,6 +18,16 @@ contextBridge.exposeInMainWorld('api', {
   salesBetween: (from, to) => ipcRenderer.invoke('sales:between', from, to),
   searchSales: (query) => ipcRenderer.invoke('sales:search', query),
 
+  // GCash cash in / cash out, kept apart from the sales
+  listGcash: (limit) => ipcRenderer.invoke('gcash:list', limit),
+  createGcash: (entry) => ipcRenderer.invoke('gcash:create', entry),
+  gcashForDay: (from, to) => ipcRenderer.invoke('gcash:day', { from, to }),
+  gcashTotals: (from, to) => ipcRenderer.invoke('gcash:totals', { from, to }),
+
+  // The GCash float left for cash-outs (one figure per day)
+  getGcashFund: (day) => ipcRenderer.invoke('gcash:fund-get', day),
+  setGcashFund: (day, amount) => ipcRenderer.invoke('gcash:fund-set', { day, amount }),
+
   // Frozen sales (hold and recall)
   listHolds: () => ipcRenderer.invoke('holds:list'),
   freezeSale: (sale) => ipcRenderer.invoke('holds:create', sale),

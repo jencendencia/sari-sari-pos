@@ -15,18 +15,18 @@ the stock list honest without typing much.
 - No barcode on the item (sachets, loose goods)? Press **Find item by name**.
 - Quantity with big + / − buttons. Every line has its own **✕ Remove** button,
   for when the customer changes their mind about one item — the total updates
-  at once, stock is untouched (nothing is sold until *Take payment*), and an
+  at once, stock is untouched (nothing is sold until *Complete sale*), and an
   **Undo** toast appears so a mis-tap is never a disaster. Tapping **−** on a
   quantity of 1 removes that line too.
-- **✅ Complete sale (F1)**, right above *Take payment*, is the quickest way
-  through the counter: the customer hands over the exact total, so it books the
-  sale there and then with that amount as the cash given — no change screen, no
-  question to answer — prints the receipt and empties the cart. It stays greyed
-  out until something is in the cart.
-- **Take payment** opens the cash screen: big keypad, one-tap shortcuts for
-  ₱50/₱100/₱200/₱500/₱1,000 and *Exact*, then the **change due** in the
-  largest type on the screen. Finishing the sale prints a receipt and reduces
-  stock automatically.
+- **✅ Complete sale (F1)** is the way through the counter. It opens the cash
+  screen with the amount already filled in as the exact total, because that is
+  how most customers pay: press **F1** or **Enter** and the sale is booked with
+  nothing to give back. If the customer hands over a bigger note, type it
+  instead — the first digit replaces the filled-in total — and the **change due**
+  appears in the largest type on the screen. The big keypad and one-tap
+  shortcuts for ₱50/₱100/₱200/₱500/₱1,000 and *Exact* are still there. Finishing
+  prints the receipt, reduces stock and empties the cart. The button stays
+  greyed out until something is in the cart.
 - **🏷️ Check price** answers “magkano ‘to?” without touching the sale. Scan a
   barcode **or type part of the item name** — the name, price and stock appear
   in big type. A few digits of a barcode also work. When several items match,
@@ -104,6 +104,31 @@ the stock list honest without typing much.
 **Sales**
 - Today's money, number of sales and items sold, plus a list of finished sales.
 - Any receipt can be reopened and printed again.
+
+**GCash** (💸 in the tab bar)
+- Cash in and cash out are recorded here, apart from the sari-sari sales: no
+  item is sold, no stock moves, and none of it goes into the day's sales
+  figures.
+- Pick **Cash in** or **Cash out**, type the amount, the GCash **reference
+  number**, and the **Payment** — the fee you charge on top of the amount, if
+  any — then press **Save GCash**. The record is listed at once with its time,
+  type, reference and a signed amount — **+** for cash in, **−** for cash out —
+  with the fee in small type under the amount, so the day can be checked against
+  the GCash app. The fee is optional and may be left at ₱0.00.
+- The cards above the form describe one day — today, or the day picked in the
+  **Day** box: **GCash change**, **Cash in**, **Cash out**, **Service fee** and
+  **Left in GCash**. Every figure is added up from the whole day in the
+  database, so nothing is missed however busy it was.
+- **GCash change today** is the money you left in GCash to give out as cash out
+  (say ₱1,000). Click that card to set or change it. Each day keeps its own
+  figure, so a new day opens at ₱0.00 on its own without anyone clearing it, and
+  **Left in GCash** is that day's change plus what came in, less what went out.
+  Clicking the card while an earlier day is shown edits that day's figure.
+- Pick a date in the **Day** box to look back at that day's GCash records,
+  however far back it is; **✕ Show all** puts the newest ones back. The cards
+  then describe that day too, so an old day can be read and checked in full.
+- The amount and the reference number are both required, and are checked in the
+  main process before anything is written.
 
 **Store settings** (⚙️ in the top bar) sets the store name printed on receipts
 and the low-stock warning level.

@@ -32,6 +32,12 @@ const peso = (n) =>
 const state = {
   products: [],
   sales: [],
+  gcash: [],
+  gcashFund: 0,
+  gcashFundDay: '',
+  gcashIn: 0,
+  gcashOut: 0,
+  gcashFee: 0,
   cart: [],
   holds: [],
   settings: { storeName: 'My Sari-Sari Store', lowStock: 5 },
@@ -181,15 +187,14 @@ document.addEventListener('keydown', (event) => {
 
 /* ------------------------------------------------------ keyboard shortcuts */
 // Everything a busy counter needs has its own key, so a sale can be rung up
-// without the mouse: F1 finishes the whole sale at the exact total, F2 find an
-// item, F3 check a price, F4 take payment, F5 freeze the sale, F6 the frozen
-// sales, F10 cancel it — and F1 also finishes the sale from inside the payment
-// screen. Escape still backs out of what is open.
+// without the mouse: F1 completes the sale (opening the cash screen filled in
+// with the exact total, and taking the money from inside it), F2 find an item,
+// F3 check a price, F5 freeze the sale, F6 the frozen sales, F10 cancel it.
+// Escape still backs out of what is open.
 const sellScreenKeys = {
   F1: () => $('#completeSaleBtn').click(),
   F2: () => openPicker(),
   F3: () => openPriceCheck(),
-  F4: () => $('#payBtn').click(),
   F5: () => freezeCurrentSale(),
   F6: () => openHolds(),
   F10: () => $('#clearCartBtn').click(),
@@ -207,7 +212,7 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     if ($('#finishBtn').disabled) {
       beep('bad');
-      toast('Type the cash the customer gave first.');
+      toast('The cash given is short of the total.');
       return;
     }
     $('#finishBtn').click();
@@ -230,7 +235,7 @@ document.addEventListener('keydown', (event) => {
   if (!action) return;
   event.preventDefault();
 
-  if (['F1', 'F4', 'F5', 'F10'].includes(event.key) && !state.cart.length) {
+  if (['F1', 'F5', 'F10'].includes(event.key) && !state.cart.length) {
     beep('bad');
     toast('The cart is empty.');
     return;
@@ -294,7 +299,6 @@ function renderCart() {
   $('#cartCount').textContent = count === 1 ? '1 item' : `${count} items`;
   $('#totalAmount').textContent = peso(cartTotal());
   $('#completeSaleBtn').disabled = count === 0;
-  $('#payBtn').disabled = count === 0;
   $('#freezeBtn').disabled = count === 0;
   $('#clearCartBtn').disabled = count === 0;
   $('#cartEmpty').hidden = count > 0;
@@ -777,6 +781,7 @@ function showScreen(name) {
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.screen === name));
   if (name === 'inventory') renderInventory();
   if (name === 'history') refreshHistory();
+  if (name === 'gcash') refreshGcash();
   if (name === 'reports') {
     if (!$('#repFrom').value || !$('#repTo').value) setReportPreset('month');
     else renderReports();
@@ -1781,13 +1786,20 @@ function renderPayment() {
       ? 'Enter the cash received'
       : change < 0
         ? `Still short by ${peso(Math.abs(change))}`
-        : 'Hand this back to the customer';
+        : change === 0
+          ? 'Exact amount — nothing to give back'
+          : 'Hand this back to the customer';
   $('#finishBtn').disabled = !(cash >= total && total > 0);
 }
 
+// Completing a sale opens the cash box already filled in with the exact total,
+// because that is how most customers pay. Pressing F1 again (or Enter) takes the
+// money and books the sale; the first digit typed replaces the filled-in amount
+// with what the customer really handed over.
 function openPayment() {
   if (!state.cart.length) return;
-  state.cash = '';
+  state.cash = String(cartTotal());
+  state.cashTyped = false;
   $('#payTotal').textContent = peso(cartTotal());
   renderPayment();
   openModal('modal-pay');
@@ -1795,12 +1807,13 @@ function openPayment() {
   setTimeout(() => $('#cashDisplay').focus(), 30);
 }
 
-$('#payBtn').addEventListener('click', openPayment);
+$('#completeSaleBtn').addEventListener('click', openPayment);
 
 $('#quickRow').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-quick]');
   if (!button) return;
   state.cash = button.dataset.quick === 'exact' ? String(cartTotal()) : button.dataset.quick;
+  state.cashTyped = true;
   renderPayment();
   beep('ok');
 });
@@ -1808,6 +1821,12 @@ $('#quickRow').addEventListener('click', (event) => {
 // Tapping the keypad and typing on the number row feed the same amount: digits
 // are appended, and one backspace takes the last one off again.
 function pressCashKey(key) {
+  // The amount starts out as the exact total. The first key says the customer
+  // handed over something else, so the box starts again from empty.
+  if (!state.cashTyped) {
+    state.cash = '';
+    state.cashTyped = true;
+  }
   if (key === 'back') state.cash = state.cash.slice(0, -1);
   else if (state.cash.length < 9) state.cash = (state.cash + key).replace(/^0+(?=\d)/, '');
   renderPayment();
@@ -1879,15 +1898,7 @@ async function finishSale() {
   await bookSale(cashValue());
 }
 
-// The counter's fast path: the customer hands over exactly what the items cost,
-// so there is no change to work out and nothing to ask — the sale is booked as
-// cash given = the total, and the receipt opens straight away.
-function completeSale() {
-  return bookSale(cartTotal());
-}
-
 $('#finishBtn').addEventListener('click', finishSale);
-$('#completeSaleBtn').addEventListener('click', completeSale);
 
 /* -------------------------------------------------------------- receipts */
 function receiptHtml(sale) {
@@ -2230,6 +2241,198 @@ async function voidSale(sale) {
     toast(err.message || 'The sale could not be voided.', { error: true, duration: 7000 });
   }
 }
+
+/* ----------------------------------------------------------------- gcash */
+// GCash cash in / cash out is money over the counter that is not a sale: no item
+// is sold and no stock moves, so it lives in its own tab and its own table. The
+// reference number is the one the GCash app shows, which is how a transaction is
+// found again when the two sides have to agree on the day's total.
+let gcashType = 'in';
+// What the list is narrowed to: a day, or nothing for the newest records. The
+// cards above always talk about today, whatever day is being looked at.
+const gcashFilter = { date: '', rows: null, seq: 0 };
+
+function gcashWhen(iso) {
+  const when = new Date(iso);
+  return isToday(iso)
+    ? when.toLocaleTimeString('en-PH', { timeStyle: 'short' })
+    : when.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function renderGcash() {
+  const rows = state.gcash || [];
+  // The cards describe one day: today, or the day picked in the box — what came
+  // in, what went out, the service fees charged, the change left for cash-outs
+  // and what the wallet should still be holding (change + in − out). The totals
+  // are added up by the database, not from the list below, which is capped.
+  const cashIn = state.gcashIn;
+  const cashOut = state.gcashOut;
+  const fee = state.gcashFee;
+  const left = Math.round((state.gcashFund + cashIn - cashOut) * 100) / 100;
+  const day = gcashFilter.date
+    ? ` on ${new Date(`${gcashFilter.date}T00:00:00`).toLocaleDateString('en-PH', {
+        dateStyle: 'medium',
+      })}`
+    : ' today';
+  $('#gcashFundLabel').textContent = `GCash change${day}`;
+  $('#gcashInLabel').textContent = `Cash in${day}`;
+  $('#gcashOutLabel').textContent = `Cash out${day}`;
+  $('#gcashFeeLabel').textContent = `Service fee${day}`;
+  $('#gcashLeftLabel').textContent = `Left in GCash${day}`;
+  $('#gcashFundChip').title = state.gcashFund
+    ? `GCash change${day}: ${peso(state.gcashFund)} — click to change it`
+    : `No GCash change${day} — click to set it`;
+  $('#gcashFundAmount').textContent = peso(state.gcashFund);
+  $('#gcashInTotal').textContent = peso(cashIn);
+  $('#gcashOutTotal').textContent = peso(cashOut);
+  $('#gcashFeeTotal').textContent = peso(fee);
+  $('#gcashLeft').textContent = peso(left);
+  const filtered = !!gcashFilter.date;
+  const shown = filtered ? gcashFilter.rows || [] : rows;
+  $('#gcashClearBtn').hidden = !filtered;
+  $('#gcashNote').textContent = filtered
+    ? `${shown.length} record(s) on ${new Date(`${gcashFilter.date}T00:00:00`).toLocaleDateString(
+        'en-PH',
+        { dateStyle: 'long' }
+      )}`
+    : '';
+  const list = $('#gcashList');
+  if (!shown.length) {
+    list.innerHTML = filtered
+      ? `<div class="empty-state"><span class="big">🔎</span>Nothing recorded on that day.<br />Clear the day to see everything.</div>`
+      : `<div class="empty-state"><span class="big">💸</span>No GCash recorded yet.<br />What you cash in or cash out appears here.</div>`;
+    return;
+  }
+  list.innerHTML = shown
+    .map((row) => {
+      const moneyIn = row.type !== 'out';
+      const fee = Number(row.payment) || 0;
+      return `
+      <div class="gcash-row ${moneyIn ? 'is-in' : 'is-out'}" data-id="${esc(row.id)}">
+        <div class="gcash-when">${gcashWhen(row.at)}</div>
+        <div class="gcash-kind">${moneyIn ? 'Cash in' : 'Cash out'}</div>
+        <div class="gcash-ref">Ref ${esc(row.reference)}</div>
+        <div class="gcash-money">
+          <div class="gcash-amount">${moneyIn ? '+' : '−'}${peso(row.amount)}</div>
+          ${fee > 0 ? `<div class="gcash-fee">+ ${peso(fee)} fee</div>` : ''}
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
+$('#gcashTypes').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-type]');
+  if (!button) return;
+  gcashType = button.dataset.type;
+  $$('#gcashTypes .gcash-chip').forEach((chip) => chip.classList.toggle('active', chip === button));
+  $('#gcashAmount').focus();
+});
+
+$('#gcashForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const save = $('#gcashForm button[type="submit"]');
+  save.disabled = true;
+  try {
+    const record = await window.api.createGcash({
+      type: gcashType,
+      amount: $('#gcashAmount').value,
+      reference: $('#gcashRef').value,
+      payment: $('#gcashPayment').value,
+    });
+    state.gcash.unshift(record);
+    $('#gcashAmount').value = '';
+    $('#gcashRef').value = '';
+    $('#gcashPayment').value = '';
+    await refreshGcash();
+    beep('done');
+    toast(`GCash ${record.type === 'out' ? 'cash out' : 'cash in'} of ${peso(record.amount)} saved.`);
+    $('#gcashAmount').focus();
+  } catch (err) {
+    beep('bad');
+    toast(err.message || 'The GCash record could not be saved.', { error: true, duration: 7000 });
+  } finally {
+    save.disabled = false;
+  }
+});
+
+// Asks the database for the day the screen is showing: the records when a date is
+// picked, and always that day's cash in, cash out, service fees and GCash change.
+// The cards come from the database because the list below is capped and could
+// understate a busy day; a failed look-up leaves them as they were.
+async function refreshGcash() {
+  const date = $('#gcashDate').value;
+  const day = date || localIsoDate(new Date());
+  const bounds = dayBounds(day);
+  gcashFilter.date = date;
+  gcashFilter.seq += 1;
+  const seq = gcashFilter.seq;
+
+  let listError = null;
+  const [totals, fund, found] = await Promise.all([
+    window.api.gcashTotals(bounds.from, bounds.to).catch(() => null),
+    window.api.getGcashFund(day).catch(() => null),
+    date
+      ? window.api.gcashForDay(bounds.from, bounds.to).catch((err) => {
+          listError = err;
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+  if (seq !== gcashFilter.seq) return; // a newer date has answered already
+
+  if (totals) {
+    state.gcashIn = Number(totals.in) || 0;
+    state.gcashOut = Number(totals.out) || 0;
+    state.gcashFee = Number(totals.fee) || 0;
+  }
+  if (fund !== null) state.gcashFund = Number(fund) || 0;
+  state.gcashFundDay = day;
+  gcashFilter.rows = date ? found || [] : null;
+  renderGcash();
+  if (listError) {
+    toast(listError.message || 'That day could not be read.', { error: true, duration: 7000 });
+  }
+}
+
+$('#gcashDate').addEventListener('change', () => refreshGcash());
+
+$('#gcashClearBtn').addEventListener('click', () => {
+  $('#gcashDate').value = '';
+  refreshGcash();
+});
+
+// The float left in GCash for cash-outs. The card edits the day being looked at,
+// and a day with no figure of its own has none: a new day opens at ₱0.00.
+$('#gcashFundChip').addEventListener('click', () => {
+  $('#gcashFundTitle').textContent = gcashFilter.date
+    ? `GCash change for ${new Date(`${gcashFilter.date}T00:00:00`).toLocaleDateString('en-PH', {
+        dateStyle: 'medium',
+      })}`
+    : 'GCash change for today';
+  $('#gcashFundInput').value = state.gcashFund ? state.gcashFund : '';
+  openModal('modal-gcash-fund');
+  setTimeout(() => {
+    $('#gcashFundInput').focus();
+    $('#gcashFundInput').select();
+  }, 30);
+});
+
+$('#gcashFundForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const amount = Math.max(0, Math.round((Number($('#gcashFundInput').value) || 0) * 100) / 100);
+  const day = gcashFilter.date || localIsoDate(new Date());
+  try {
+    const saved = await window.api.setGcashFund(day, amount);
+    state.gcashFund = Number(saved && saved.amount) || 0;
+    state.gcashFundDay = (saved && saved.day) || day;
+    closeModal('modal-gcash-fund');
+    await refreshGcash();
+    toast(amount ? `GCash change saved: ${peso(amount)}` : 'GCash change cleared.');
+  } catch (err) {
+    toast(errText(err), { error: true, duration: 7000 });
+  }
+});
 
 /* --------------------------------------------------------------- settings */
 // Says in plain words whether the app is copying itself, and when it last did.
@@ -2878,10 +3081,22 @@ $('#fundForm').addEventListener('submit', async (event) => {
   }
 });
 
-// Midnight: a new day gets a fresh float, so the chip follows the calendar.
+// Midnight: a new day gets a fresh float, so the chip follows the calendar. The
+// GCash float is left behind the same way: once the date turns, it is ₱0.00 and
+// the screen says so without the amount being cleared by hand.
 setInterval(() => {
   const today = localIsoDate(new Date());
   if (state.fundDay && state.fundDay !== today) loadChangeFund();
+  // A new day starts with no GCash change and no figures of its own — unless a
+  // past day is being looked at, which needs nothing refreshed.
+  if (!gcashFilter.date && state.gcashFundDay && state.gcashFundDay !== today) {
+    state.gcashFund = 0;
+    state.gcashIn = 0;
+    state.gcashOut = 0;
+    state.gcashFee = 0;
+    renderGcash();
+    refreshGcash();
+  }
 }, 60 * 1000);
 
 let reportToken = 0;
@@ -3052,7 +3267,9 @@ async function init() {
 
   state.products = (await window.api.listProducts()) || [];
   state.sales = (await window.api.listSales(500)) || [];
+  state.gcash = (await window.api.listGcash(500)) || [];
   await loadChangeFund();
+  await refreshGcash();
   await refreshHolds();
   renderCart();
   updateToday();

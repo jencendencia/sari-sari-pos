@@ -64,8 +64,7 @@
               <div class="total-label">Total to pay</div>
               <div class="total-amount" id="totalAmount">₱0.00</div>
             </div>
-            <button class="btn btn-green" id="completeSaleBtn" title="F1 — complete the sale, paid with the exact total" disabled>✅ Complete sale<kbd class="key">F1</kbd></button>
-            <button class="btn btn-pay" id="payBtn" title="F4 — take payment" disabled>💰 Take payment<kbd class="key">F4</kbd></button>
+            <button class="btn btn-green" id="completeSaleBtn" title="F1 — complete the sale; the cash starts on the exact total" disabled>✅ Complete sale<kbd class="key">F1</kbd></button>
             <button class="btn btn-ghost" id="freezeBtn" title="F5 — freeze this sale" disabled>🧊 Freeze this sale<kbd class="key">F5</kbd></button>
             <button class="btn btn-ghost" id="holdsBtn" title="F6 — frozen sales">🧊 Frozen sales<span class="pill pill-count" id="holdsCount" hidden>0</span><kbd class="key">F6</kbd></button>
             <button class="btn btn-ghost" id="clearCartBtn" title="F10 — cancel this sale" disabled>✖ Cancel this sale<kbd class="key">F10</kbd></button>
@@ -168,6 +167,79 @@
           <iframe class="report-frame" id="reportFrame" title="Report preview"></iframe>
         </div>
       </section>
+
+      <!-- ============================================================ GCASH -->
+      <section class="screen" id="screen-gcash">
+        <div class="hist-summary">
+          <button
+            type="button"
+            class="stat stat-btn"
+            id="gcashFundChip"
+            title="The money you left in GCash for cash out today — click to change it"
+          >
+            <span class="stat-label" id="gcashFundLabel">GCash change today</span>
+            <span class="stat-value" id="gcashFundAmount">₱0.00</span>
+          </button>
+          <div class="stat">
+            <div class="stat-label" id="gcashInLabel">Cash in today</div>
+            <div class="stat-value" id="gcashInTotal">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label" id="gcashOutLabel">Cash out today</div>
+            <div class="stat-value" id="gcashOutTotal">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label" id="gcashFeeLabel">Service fee today</div>
+            <div class="stat-value" id="gcashFeeTotal">₱0.00</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label" id="gcashLeftLabel">Left in GCash</div>
+            <div class="stat-value" id="gcashLeft">₱0.00</div>
+          </div>
+        </div>
+        <div class="hist-bar">
+          <label class="rep-date">Day <input id="gcashDate" type="date" /></label>
+          <span class="rep-note" id="gcashNote"></span>
+          <button type="button" class="btn btn-ghost" id="gcashClearBtn" hidden>
+            ✕ Show all
+          </button>
+        </div>
+        <form class="gcash-form" id="gcashForm">
+          <div class="gcash-types" id="gcashTypes" role="group" aria-label="Type">
+            <button type="button" class="gcash-chip active" data-type="in">Cash in</button>
+            <button type="button" class="gcash-chip" data-type="out">Cash out</button>
+          </div>
+          <label class="gcash-field">
+            <span>Amount (₱)</span>
+            <input
+              id="gcashAmount"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+            />
+          </label>
+          <label class="gcash-field">
+            <span>Reference number</span>
+            <input id="gcashRef" placeholder="Example: 0123456789012" autocomplete="off" />
+          </label>
+          <label class="gcash-field">
+            <span>Payment (₱)</span>
+            <input
+              id="gcashPayment"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+              title="The fee you charge for the cash in or cash out, if any"
+            />
+          </label>
+          <button type="submit" class="btn btn-green">💸 Save GCash</button>
+        </form>
+        <div class="gcash-list" id="gcashList"></div>
+      </section>
     </main>
 
     <nav class="tabbar">
@@ -175,6 +247,7 @@
       <button class="tab" data-screen="inventory"><span class="tab-icon">📦</span> Inventory</button>
       <button class="tab" data-screen="history"><span class="tab-icon">🧾</span> Sales</button>
       <button class="tab" data-screen="reports"><span class="tab-icon">📊</span> Reports</button>
+      <button class="tab" data-screen="gcash"><span class="tab-icon">💸</span> GCash</button>
     </nav>
 
     <div class="toast" id="toast" hidden><span id="toastText"></span></div>
@@ -332,7 +405,7 @@
     <div class="modal-backdrop" id="modal-pay" hidden>
       <div class="modal modal-wide">
         <div class="pay-head">
-          <h2>Take payment</h2>
+          <h2>Complete sale</h2>
           <div class="pay-total">Total: <span id="payTotal">₱0.00</span></div>
         </div>
         <div class="pay-grid">
@@ -368,10 +441,39 @@
               <div class="change-amount" id="changeAmount">₱0.00</div>
               <div class="change-note" id="changeNote">Enter the cash received</div>
             </div>
-            <button class="btn btn-pay" id="finishBtn" title="F1 — finish the sale" disabled>✔ Finish sale<kbd class="key">F1</kbd></button>
+            <button class="btn btn-pay" id="finishBtn" title="F1 — take the money and complete the sale" disabled>✔ Complete sale<kbd class="key">F1</kbd></button>
             <button class="btn btn-ghost" data-close>← Back to the cart</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ====================================================== gcash float -->
+    <div class="modal-backdrop" id="modal-gcash-fund" hidden>
+      <div class="modal">
+        <h2 id="gcashFundTitle">GCash change for today</h2>
+        <p class="modal-note">
+          The money you left in GCash to give out as cash out. Each day keeps its own figure, so a
+          day with nothing set is ₱0.00.
+        </p>
+        <form id="gcashFundForm">
+          <label class="field">
+            <span>Amount left in GCash (₱)</span>
+            <input
+              id="gcashFundInput"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+            />
+          </label>
+          <div class="modal-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-green">Save</button>
+          </div>
+        </form>
       </div>
     </div>
 

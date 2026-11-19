@@ -99,7 +99,31 @@ function openDb() {
       amount REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT ''
     );
+    -- GCash cash in / cash out is money over the counter, not a sale: nothing
+    -- is sold and no stock moves, so it is kept in its own table.
+    CREATE TABLE IF NOT EXISTS gcash (
+      id TEXT PRIMARY KEY,
+      at TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'in',
+      amount REAL NOT NULL DEFAULT 0,
+      reference TEXT NOT NULL DEFAULT '',
+      payment REAL NOT NULL DEFAULT 0
+    );
+    -- The GCash float: money left in the wallet to give out as cash out. It is
+    -- stored against the day, so a new day starts at zero on its own.
+    CREATE TABLE IF NOT EXISTS gcash_fund (
+      day TEXT PRIMARY KEY,
+      amount REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
   `);
+  // A GCash record now carries the fee charged for it, so databases made before
+  // the fee existed need the column added.
+  const gcashColumns = db.all('PRAGMA table_info(gcash)');
+  if (gcashColumns && !gcashColumns.some((c) => c.name === 'payment')) {
+    db.exec('ALTER TABLE gcash ADD COLUMN payment REAL NOT NULL DEFAULT 0');
+  }
+
   // Databases created before the original price existed need the column added.
   const productColumns = db.all('PRAGMA table_info(products)');
   if (productColumns && !productColumns.some((c) => c.name === 'original_price')) {
@@ -1111,6 +1135,91 @@ ipcMain.handle('sales:void', (_event, id) => {
 
   conn.run('UPDATE sales SET voided = 1 WHERE id = ?', [key]);
   return { id: key, returned, missing };
+});
+
+// ---------------------------------------------------------------------------
+// GCash cash in / cash out
+// ---------------------------------------------------------------------------
+// Money that crosses the counter for GCash. Nothing is sold and no stock moves,
+// so these records never touch a sale; the reference number is what the shop and
+// the customer use to find the transaction in the GCash app.
+ipcMain.handle('gcash:list', (_event, limit) => {
+  const max = Math.max(1, Math.min(2000, asNumber(limit, 200)));
+  return openDb().all('SELECT * FROM gcash ORDER BY rowid DESC LIMIT ?', [max]);
+});
+
+// The day's GCash totals, added up by the database. The list on screen holds
+// only the newest few hundred records, so a busy day could understate a figure
+// added up from memory; SUM here covers every record of the day.
+ipcMain.handle('gcash:totals', (_event, payload) => {
+  const from = String((payload && payload.from) || '');
+  const to = String((payload && payload.to) || '');
+  if (!from || !to) throw new Error('Pick the day to add up.');
+  const rows = openDb().all(
+    'SELECT type, SUM(amount) AS total, SUM(payment) AS fees FROM gcash WHERE at >= ? AND at <= ? GROUP BY type',
+    [from, to]
+  );
+  const totals = { in: 0, out: 0, fee: 0 };
+  rows.forEach((row) => {
+    const sum = Math.round((Number(row.total) || 0) * 100) / 100;
+    const fees = Math.round((Number(row.fees) || 0) * 100) / 100;
+    if (row.type === 'out') totals.out = sum;
+    else totals.in = sum;
+    totals.fee = Math.round((totals.fee + fees) * 100) / 100;
+  });
+  return totals;
+});
+
+// One day's GCash records, for looking back at a date. The timestamps are ISO
+// strings, so they compare correctly as text.
+ipcMain.handle('gcash:day', (_event, payload) => {
+  const from = String((payload && payload.from) || '');
+  const to = String((payload && payload.to) || '');
+  if (!from || !to) throw new Error('Pick the date to look at.');
+  return openDb().all(
+    'SELECT * FROM gcash WHERE at >= ? AND at <= ? ORDER BY at DESC LIMIT 500',
+    [from, to]
+  );
+});
+
+ipcMain.handle('gcash:create', (_event, payload) => {
+  const type = payload && payload.type === 'out' ? 'out' : 'in';
+  const amount = Math.round(Math.max(0, asNumber(payload && payload.amount)) * 100) / 100;
+  if (!(amount > 0)) throw new Error('Type the GCash amount.');
+  const reference = String((payload && payload.reference) || '').trim();
+  if (!reference) throw new Error('Type the GCash reference number.');
+  // The fee is what the shop charges on top of the amount; it is optional.
+  const payment = Math.round(Math.max(0, asNumber(payload && payload.payment)) * 100) / 100;
+  const record = { id: uid(), at: new Date().toISOString(), type, amount, reference, payment };
+  openDb().run(
+    'INSERT INTO gcash (id, at, type, amount, reference, payment) VALUES (?,?,?,?,?,?)',
+    [record.id, record.at, record.type, record.amount, record.reference, record.payment]
+  );
+  return record;
+});
+
+// The float left in GCash for cash-outs. Like the drawer's float it belongs to
+// one day: the figure is stored against the date, so tomorrow opens at zero
+// without anyone having to clear yesterday's amount.
+ipcMain.handle('gcash:fund-get', (_event, day) => {
+  const row = openDb().get('SELECT amount FROM gcash_fund WHERE day = ?', [cleanDay(day)]);
+  return row ? Math.max(0, asNumber(row.amount)) : 0;
+});
+
+ipcMain.handle('gcash:fund-set', (_event, payload) => {
+  const day = cleanDay(payload && payload.day);
+  const amount = Math.max(0, Math.round(asNumber(payload && payload.amount) * 100) / 100);
+  const stamp = new Date().toISOString();
+  const conn = openDb();
+  const updated = conn.run('UPDATE gcash_fund SET amount = ?, updated_at = ? WHERE day = ?', [
+    amount,
+    stamp,
+    day,
+  ]);
+  if (!updated.changes) {
+    conn.run('INSERT INTO gcash_fund (day, amount, updated_at) VALUES (?,?,?)', [day, amount, stamp]);
+  }
+  return { day, amount };
 });
 
 // ---------------------------------------------------------------------------
