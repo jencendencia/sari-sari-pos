@@ -1198,6 +1198,36 @@ ipcMain.handle('gcash:create', (_event, payload) => {
   return record;
 });
 
+// Changing a record keeps its own time: the money did cross the counter when it
+// did, so only what was typed wrongly — the direction, the amount, the
+// reference, the fee — is replaced.
+ipcMain.handle('gcash:update', (_event, payload) => {
+  const id = String((payload && payload.id) || '').trim();
+  if (!id) throw new Error('That GCash record is not on screen any more.');
+  const type = payload.type === 'out' ? 'out' : 'in';
+  const amount = Math.round(Math.max(0, asNumber(payload && payload.amount)) * 100) / 100;
+  if (!(amount > 0)) throw new Error('Type the GCash amount.');
+  const reference = String((payload && payload.reference) || '').trim();
+  if (!reference) throw new Error('Type the GCash reference number.');
+  // The fee is what the shop charges on top of the amount; it is optional.
+  const payment = Math.round(Math.max(0, asNumber(payload && payload.payment)) * 100) / 100;
+  const conn = openDb();
+  const updated = conn.run(
+    'UPDATE gcash SET type = ?, amount = ?, reference = ?, payment = ? WHERE id = ?',
+    [type, amount, reference, payment, id]
+  );
+  if (!updated.changes) throw new Error('That GCash record is not there any more.');
+  return conn.get('SELECT * FROM gcash WHERE id = ?', [id]);
+});
+
+ipcMain.handle('gcash:delete', (_event, id) => {
+  const key = String(id || '').trim();
+  if (!key) throw new Error('That GCash record is not on screen any more.');
+  const removed = openDb().run('DELETE FROM gcash WHERE id = ?', [key]);
+  if (!removed.changes) throw new Error('That GCash record is not there any more.');
+  return { id: key };
+});
+
 // The float left in GCash for cash-outs. Like the drawer's float it belongs to
 // one day: the figure is stored against the date, so tomorrow opens at zero
 // without anyone having to clear yesterday's amount.

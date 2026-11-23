@@ -115,6 +115,12 @@ the stock list honest without typing much.
   type, reference and a signed amount — **+** for cash in, **−** for cash out —
   with the fee in small type under the amount, so the day can be checked against
   the GCash app. The fee is optional and may be left at ₱0.00.
+- Every record has **✏️ Edit** and **✕ Delete** on its row. **Edit** opens the
+  record with its type, amount, reference and fee ready to be corrected — the
+  same time and day are kept, and the day's cards follow the correction at
+  once. **Delete** asks first — *No, go back* is the button that starts
+  selected — then takes the record out of the day's figures. A deleted record
+  cannot be brought back, so correct a wrong one with **Edit** instead.
 - The cards above the form describe one day — today, or the day picked in the
   **Day** box: **GCash change**, **Cash in**, **Cash out**, **Service fee** and
   **Left in GCash**. Every figure is added up from the whole day in the

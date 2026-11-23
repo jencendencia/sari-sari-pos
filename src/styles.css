@@ -1057,6 +1057,10 @@ main {
   color: #fff;
 }
 
+#modal-gcash-edit .gcash-types {
+  margin-bottom: 12px;
+}
+
 .gcash-field {
   display: flex;
   flex-direction: column;
@@ -1154,6 +1158,20 @@ main {
   font-size: 21px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Correcting a record: the buttons stay quiet until the row is pointed at, so a
+   busy list still reads as money first. */
+.gcash-actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0.45;
+  transition: opacity 0.12s ease;
+}
+
+.gcash-row:hover .gcash-actions,
+.gcash-actions:focus-within {
+  opacity: 1;
 }
 
 /* The fee charged on top of the amount, kept small so it never reads as part of

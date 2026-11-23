@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   // GCash cash in / cash out, kept apart from the sales
   listGcash: (limit) => ipcRenderer.invoke('gcash:list', limit),
   createGcash: (entry) => ipcRenderer.invoke('gcash:create', entry),
+  updateGcash: (entry) => ipcRenderer.invoke('gcash:update', entry),
+  deleteGcash: (id) => ipcRenderer.invoke('gcash:delete', id),
   gcashForDay: (from, to) => ipcRenderer.invoke('gcash:day', { from, to }),
   gcashTotals: (from, to) => ipcRenderer.invoke('gcash:totals', { from, to }),
 

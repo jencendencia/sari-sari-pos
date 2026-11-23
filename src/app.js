@@ -2259,8 +2259,12 @@ function gcashWhen(iso) {
     : when.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// The records on screen: one day when a day is picked, otherwise the newest ones.
+function gcashShownRows() {
+  return gcashFilter.date ? gcashFilter.rows || [] : state.gcash || [];
+}
+
 function renderGcash() {
-  const rows = state.gcash || [];
   // The cards describe one day: today, or the day picked in the box — what came
   // in, what went out, the service fees charged, the change left for cash-outs
   // and what the wallet should still be holding (change + in − out). The totals
@@ -2288,7 +2292,7 @@ function renderGcash() {
   $('#gcashFeeTotal').textContent = peso(fee);
   $('#gcashLeft').textContent = peso(left);
   const filtered = !!gcashFilter.date;
-  const shown = filtered ? gcashFilter.rows || [] : rows;
+  const shown = gcashShownRows();
   $('#gcashClearBtn').hidden = !filtered;
   $('#gcashNote').textContent = filtered
     ? `${shown.length} record(s) on ${new Date(`${gcashFilter.date}T00:00:00`).toLocaleDateString(
@@ -2315,6 +2319,15 @@ function renderGcash() {
         <div class="gcash-money">
           <div class="gcash-amount">${moneyIn ? '+' : '−'}${peso(row.amount)}</div>
           ${fee > 0 ? `<div class="gcash-fee">+ ${peso(fee)} fee</div>` : ''}
+        </div>
+        <div class="gcash-actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="edit">✏️ Edit</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm btn-danger"
+            data-act="delete"
+            aria-label="Delete this ${moneyIn ? 'cash in' : 'cash out'} of ${peso(row.amount)}"
+          >✕ Delete</button>
         </div>
       </div>`;
     })
@@ -2351,6 +2364,102 @@ $('#gcashForm').addEventListener('submit', async (event) => {
   } catch (err) {
     beep('bad');
     toast(err.message || 'The GCash record could not be saved.', { error: true, duration: 7000 });
+  } finally {
+    save.disabled = false;
+  }
+});
+
+// A record typed wrongly is corrected in place: its own time is kept, so the day
+// it belongs to — and the cards that add it up — stay where they are.
+let gcashEditId = '';
+
+function openGcashEdit(record) {
+  const moneyIn = record.type !== 'out';
+  gcashEditId = record.id;
+  $('#gcashEditWhen').textContent = `${moneyIn ? 'Cash in' : 'Cash out'} of ${peso(
+    record.amount
+  )} recorded ${gcashWhen(record.at)} — change what was typed wrongly and save.`;
+  $$('#gcashEditTypes .gcash-chip').forEach((chip) =>
+    chip.classList.toggle('active', (chip.dataset.type === 'out') === !moneyIn)
+  );
+  $('#gcashEditAmount').value = record.amount;
+  $('#gcashEditRef').value = record.reference;
+  $('#gcashEditPayment').value = Number(record.payment) ? record.payment : '';
+  openModal('modal-gcash-edit');
+  setTimeout(() => {
+    $('#gcashEditAmount').focus();
+    $('#gcashEditAmount').select();
+  }, 30);
+}
+
+$('#gcashEditTypes').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-type]');
+  if (!button) return;
+  $$('#gcashEditTypes .gcash-chip').forEach((chip) => chip.classList.toggle('active', chip === button));
+  $('#gcashEditAmount').focus();
+});
+
+$('#gcashList').addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-act]');
+  if (!button) return;
+  const row = button.closest('.gcash-row');
+  const record = row && (gcashShownRows().find((r) => r.id === row.dataset.id) || null);
+  if (!record) return;
+  const moneyIn = record.type !== 'out';
+
+  if (button.dataset.act === 'edit') return openGcashEdit(record);
+
+  if (button.dataset.act === 'delete') {
+    const ok = await confirmBox(
+      'Delete this GCash record?',
+      `${moneyIn ? 'Cash in' : 'Cash out'} of ${peso(record.amount)} on ref ${
+        record.reference
+      } will be removed, and the day's cards will no longer count it. This cannot be undone.`,
+      'Yes, delete'
+    );
+    if (!ok) return;
+    try {
+      await window.api.deleteGcash(record.id);
+      state.gcash = (state.gcash || []).filter((r) => r.id !== record.id);
+      if (gcashFilter.rows) gcashFilter.rows = gcashFilter.rows.filter((r) => r.id !== record.id);
+      await refreshGcash();
+      toast(`Deleted the GCash ${moneyIn ? 'cash in' : 'cash out'} of ${peso(record.amount)}.`);
+    } catch (err) {
+      toast(err.message || 'That GCash record could not be deleted.', { error: true, duration: 7000 });
+    }
+  }
+});
+
+$('#gcashEditForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!gcashEditId) return;
+  const active = $('#gcashEditTypes .gcash-chip.active');
+  const save = $('#gcashEditForm button[type="submit"]');
+  save.disabled = true;
+  try {
+    const saved = await window.api.updateGcash({
+      id: gcashEditId,
+      type: active ? active.dataset.type : 'in',
+      amount: $('#gcashEditAmount').value,
+      reference: $('#gcashEditRef').value,
+      payment: $('#gcashEditPayment').value,
+    });
+    state.gcash = (state.gcash || []).map((r) => (r.id === saved.id ? saved : r));
+    if (gcashFilter.rows) {
+      gcashFilter.rows = gcashFilter.rows.map((r) => (r.id === saved.id ? saved : r));
+    }
+    gcashEditId = '';
+    closeModal('modal-gcash-edit');
+    await refreshGcash();
+    beep('done');
+    toast(
+      `GCash record changed: ${saved.type === 'out' ? 'cash out' : 'cash in'} of ${peso(
+        saved.amount
+      )}.`
+    );
+  } catch (err) {
+    beep('bad');
+    toast(err.message || 'The GCash record could not be changed.', { error: true, duration: 7000 });
   } finally {
     save.disabled = false;
   }

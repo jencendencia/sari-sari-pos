@@ -477,6 +477,52 @@
       </div>
     </div>
 
+    <!-- ===================================================== gcash record -->
+    <div class="modal-backdrop" id="modal-gcash-edit" hidden>
+      <div class="modal">
+        <h2>Edit GCash record</h2>
+        <p class="modal-note" id="gcashEditWhen"></p>
+        <form id="gcashEditForm">
+          <div class="gcash-types" id="gcashEditTypes" role="group" aria-label="Type">
+            <button type="button" class="gcash-chip active" data-type="in">Cash in</button>
+            <button type="button" class="gcash-chip" data-type="out">Cash out</button>
+          </div>
+          <label class="field">
+            <span>Amount (₱)</span>
+            <input
+              id="gcashEditAmount"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+            />
+          </label>
+          <label class="field">
+            <span>Reference number</span>
+            <input id="gcashEditRef" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Payment (₱)</span>
+            <input
+              id="gcashEditPayment"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+            />
+            <small>The fee you charge for this cash in or cash out, if any.</small>
+          </label>
+          <div class="modal-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-green">Save changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <!-- ========================================================== receipt -->
     <div class="modal-backdrop" id="modal-receipt" hidden>
       <div class="modal">
